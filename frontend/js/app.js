@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = (window.TBMC_CONFIG && window.TBMC_CONFIG.API_BASE) || "http://127.0.0.1:8000";
 const SEARCH_TIMEOUT_MS = 90000;
 const SUBMIT_TIMEOUT_MS = 180000;
 
