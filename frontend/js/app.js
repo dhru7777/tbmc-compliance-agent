@@ -360,18 +360,30 @@ function renderScorecard(data) {
 }
 
 function renderOwnerRows() {
-  document.getElementById("owners-list").innerHTML = owners
+  const list = document.getElementById("owners-list");
+  if (!owners.length) {
+    list.innerHTML = `<p class="people-empty">—</p>`;
+    return;
+  }
+  list.innerHTML = owners
     .map(
       (o, i) => `
-    <div class="owner-row owner-row-single">
+    <div class="owner-row">
       <input type="text" placeholder="Owner name" value="${o.name}" data-i="${i}" class="owner-name" />
+      <input type="number" placeholder="%" value="${o.ownership_pct}" data-i="${i}" class="owner-pct" min="0" max="100" />
+      <button type="button" class="btn btn-secondary remove-owner" data-i="${i}">Remove</button>
     </div>`
     )
     .join("");
 }
 
 function renderPersonRows() {
-  document.getElementById("persons-list").innerHTML = controlPersons
+  const list = document.getElementById("persons-list");
+  if (!controlPersons.length) {
+    list.innerHTML = `<p class="people-empty">—</p>`;
+    return;
+  }
+  list.innerHTML = controlPersons
     .map(
       (p, i) => `
     <div class="owner-row">
@@ -537,7 +549,6 @@ async function initKybSession() {
   kybPublicFacts = null;
   searchRequestId = 0;
   owners.length = 0;
-  owners.push({ name: "", ownership_pct: 25 });
   controlPersons.length = 0;
   pendingDocs.length = 0;
 
@@ -599,19 +610,30 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  document.getElementById("owners-list").addEventListener("input", (e) => {
-    const i = parseInt(e.target.dataset.i, 10);
-    if (e.target.classList.contains("owner-name")) owners[i].name = e.target.value;
+  document.getElementById("add-owner-btn").addEventListener("click", () => {
+    owners.push({ name: "", ownership_pct: 25 });
+    renderOwnerRows();
   });
   document.getElementById("add-person-btn").addEventListener("click", () => {
     controlPersons.push({ name: "", title: "CEO" });
     renderPersonRows();
   });
 
+  document.getElementById("owners-list").addEventListener("input", (e) => {
+    const i = parseInt(e.target.dataset.i, 10);
+    if (e.target.classList.contains("owner-name")) owners[i].name = e.target.value;
+    if (e.target.classList.contains("owner-pct")) owners[i].ownership_pct = parseFloat(e.target.value) || 0;
+  });
   document.getElementById("persons-list").addEventListener("input", (e) => {
     const i = parseInt(e.target.dataset.i, 10);
     if (e.target.classList.contains("person-name")) controlPersons[i].name = e.target.value;
     if (e.target.classList.contains("person-title")) controlPersons[i].title = e.target.value;
+  });
+  document.getElementById("owners-list").addEventListener("click", (e) => {
+    if (e.target.classList.contains("remove-owner")) {
+      owners.splice(parseInt(e.target.dataset.i, 10), 1);
+      renderOwnerRows();
+    }
   });
   document.getElementById("persons-list").addEventListener("click", (e) => {
     if (e.target.classList.contains("remove-person")) {
