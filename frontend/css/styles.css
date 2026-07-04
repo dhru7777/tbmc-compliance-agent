@@ -525,6 +525,10 @@ body.landing-active .site-footer {
   width: 100%;
 }
 
+.kyb-people-col .owner-row-single {
+  grid-template-columns: 1fr;
+}
+
 #enterprise .kyb-section-title {
   font-size: 0.9rem;
   margin-bottom: 0.35rem;
