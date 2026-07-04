@@ -2,7 +2,7 @@
 # OR set Railway service Root Directory = backend and use backend/railway.toml.
 [build]
 builder = "dockerfile"
-dockerfilePath = "backend/Dockerfile"
+dockerfilePath = "Dockerfile"
 watchPatterns = ["backend/**"]
 
 [deploy]
