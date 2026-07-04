@@ -29,3 +29,13 @@ Open http://127.0.0.1:5173
 Document upload → VERIFY (AI + deterministic rules) → scorecard (x401 credential deferred)
 
 See `agent-skill/Claude_context.md` for product scope and architecture notes.
+
+## Deploy (Railway backend)
+
+This repo is a **monorepo** (`frontend/` + `backend/`). Railway must build the API from `backend/`.
+
+**Option A — recommended:** In Railway → service **Settings** → set **Root Directory** to `backend`. Point config file to `/backend/railway.toml`.
+
+**Option B — build from repo root:** Keep root `railway.toml` (uses `backend/Dockerfile`). No root directory change needed.
+
+Set `ANTHROPIC_API_KEY` in Railway variables. Health check: `GET /api/health`.

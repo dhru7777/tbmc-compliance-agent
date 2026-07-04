@@ -1,0 +1,11 @@
+# Monorepo: Python app lives in backend/. Either use this file at repo root
+# OR set Railway service Root Directory = backend and use backend/railway.toml.
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+watchPatterns = ["backend/**"]
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
