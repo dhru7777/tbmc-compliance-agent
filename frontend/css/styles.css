@@ -165,6 +165,26 @@ a {
   border-radius: 999px;
 }
 
+.path-card-disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+  border-color: var(--border);
+  pointer-events: none;
+}
+
+.path-card-disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.path-soon {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
 /* Form sections */
 .section {
   display: none;
@@ -1272,79 +1292,6 @@ body.landing-active .site-footer {
   grid-template-columns: 1fr 100px auto;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
-}
-
-@media (min-width: 901px) {
-  body.kyb-desktop-fit {
-    overflow: hidden;
-    height: 100vh;
-  }
-
-  body.kyb-desktop-fit .site-footer {
-    display: none;
-  }
-
-  body.kyb-desktop-fit #enterprise.section.active {
-    max-width: 1080px;
-    height: 100vh;
-    overflow: hidden;
-    padding: 4rem 1rem 0.75rem;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-  }
-
-  body.kyb-desktop-fit #enterprise .section-header,
-  body.kyb-desktop-fit #enterprise .wizard-steps {
-    flex-shrink: 0;
-  }
-
-  body.kyb-desktop-fit #kyb-step-1.wizard-panel.active {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  body.kyb-desktop-fit .kyb-layout {
-    flex: 1;
-    min-height: 0;
-    height: auto;
-    align-items: stretch;
-  }
-
-  body.kyb-desktop-fit .kyb-main {
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  body.kyb-desktop-fit .documents-section {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 0;
-  }
-
-  body.kyb-desktop-fit .doc-list {
-    flex: 1;
-    min-height: 0;
-    max-height: 4.5rem;
-    overflow-y: auto;
-    margin-top: 0.35rem;
-  }
-
-  body.kyb-desktop-fit .kyb-sidebar {
-    height: 100%;
-    min-height: 0;
-  }
-
-  body.kyb-desktop-fit .kyb-sidebar .verify-panel[open] .verify-checklist {
-    max-height: calc(100vh - 16rem);
-  }
 }
 
 @media (max-width: 900px) {

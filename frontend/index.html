@@ -39,13 +39,10 @@
           <span class="arrow">Start KYB verification →</span>
         </div>
 
-        <div class="path-card" id="go-issuer" role="button" tabindex="0">
+        <div class="path-card path-card-disabled" id="go-issuer" aria-disabled="true">
           <h2>I'm a Stablecoin Issuer</h2>
-          <p>
-            Submit reserve disclosures for GENIUS Act compliance review.
-            Enter your issuer name (e.g. Circle) and stablecoin (e.g. USDC).
-          </p>
-          <span class="arrow">Start issuer compliance →</span>
+          <p>GENIUS Act reserve disclosure review and issuer compliance scorecard.</p>
+          <span class="path-soon">Coming soon</span>
         </div>
       </section>
     </div>
@@ -163,18 +160,17 @@
     <div class="section-header">
       <button type="button" class="back-link">← Back</button>
       <h1>Issuer Compliance Verification</h1>
-      <p>Enter your issuer details and add reserve disclosure documents one at a time.</p>
     </div>
 
     <form id="issuer-form">
       <div class="form-group">
         <label for="issuer_name">Issuer name</label>
-        <input type="text" id="issuer_name" name="issuer_name" placeholder="Circle" required />
+        <input type="text" id="issuer_name" name="issuer_name" required />
       </div>
 
       <div class="form-group">
         <label for="stablecoin_ticker">Stablecoin ticker</label>
-        <input type="text" id="stablecoin_ticker" name="stablecoin_ticker" list="ticker-suggestions" placeholder="USDC" required />
+        <input type="text" id="stablecoin_ticker" name="stablecoin_ticker" list="ticker-suggestions" required />
         <datalist id="ticker-suggestions">
           <option value="USDC"></option>
           <option value="PYUSD"></option>
@@ -211,6 +207,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=12"></script>
+  <script src="js/app.js?v=14"></script>
 </body>
 </html>

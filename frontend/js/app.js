@@ -16,19 +16,15 @@ const pendingDocs = [];
 function showSection(id) {
   document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  document.body.classList.remove("landing-active", "kyb-desktop-fit");
-  if (id === "enterprise") {
-    document.body.classList.add("kyb-desktop-fit");
-  }
-  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  document.body.classList.remove("landing-active");
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function showLanding() {
   document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
   document.getElementById("landing").classList.add("active");
   document.body.classList.add("landing-active");
-  document.body.classList.remove("kyb-desktop-fit");
-  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function setWizardStep(n) {
@@ -580,7 +576,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  document.getElementById("go-issuer").addEventListener("click", () => showSection("issuer"));
+
   document.querySelectorAll(".back-link").forEach((btn) => btn.addEventListener("click", showLanding));
 
   ["kyb_legal_name", "kyb_state"].forEach((id) => {
