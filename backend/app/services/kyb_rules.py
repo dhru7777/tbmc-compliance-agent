@@ -49,6 +49,14 @@ def extract_state_from_address(addr: str) -> str | None:
 
 
 def check_legal_name(user_name: str, public_name: str) -> dict:
+    user_name = as_text(user_name)
+    public_name = as_text(public_name)
+    if not user_name and not public_name:
+        return _with_recommendation({"result": "FLAG", "detail": "Legal name not provided"}, 1)
+    if not user_name:
+        return {"result": "SKIP", "detail": "Inferred from documents — no form entry to compare"}
+    if not public_name:
+        return {"result": "SKIP", "detail": "No public record to compare"}
     score = fuzzy_match(user_name, public_name)
     if score >= 0.85:
         return {"result": "PASS", "detail": f"Name match ({score:.0%})"}

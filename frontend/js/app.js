@@ -16,15 +16,19 @@ const pendingDocs = [];
 function showSection(id) {
   document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  document.body.classList.remove("landing-active");
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  document.body.classList.remove("landing-active", "kyb-desktop-fit");
+  if (id === "enterprise") {
+    document.body.classList.add("kyb-desktop-fit");
+  }
+  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
 }
 
 function showLanding() {
   document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
   document.getElementById("landing").classList.add("active");
   document.body.classList.add("landing-active");
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  document.body.classList.remove("kyb-desktop-fit");
+  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
 }
 
 function setWizardStep(n) {
@@ -360,12 +364,7 @@ function renderScorecard(data) {
 }
 
 function renderOwnerRows() {
-  const list = document.getElementById("owners-list");
-  if (!owners.length) {
-    list.innerHTML = `<p class="people-empty">—</p>`;
-    return;
-  }
-  list.innerHTML = owners
+  document.getElementById("owners-list").innerHTML = owners
     .map(
       (o, i) => `
     <div class="owner-row">
@@ -378,12 +377,7 @@ function renderOwnerRows() {
 }
 
 function renderPersonRows() {
-  const list = document.getElementById("persons-list");
-  if (!controlPersons.length) {
-    list.innerHTML = `<p class="people-empty">—</p>`;
-    return;
-  }
-  list.innerHTML = controlPersons
+  document.getElementById("persons-list").innerHTML = controlPersons
     .map(
       (p, i) => `
     <div class="owner-row">
@@ -485,7 +479,7 @@ async function runDebouncedSearch() {
   if (!kybSessionId) return;
 
   const { legal_name, state, operating_address, business_purpose } = getUserInputs();
-  if (legal_name.length < 5) {
+  if (legal_name.length < 3) {
     setSearchBadge("");
     updatePublicRecordSummary(null);
     document.getElementById("kyb-public-facts").innerHTML = "";
@@ -666,11 +660,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const loading = document.getElementById("kyb-submit-loading");
     const inputs = getUserInputs();
 
-    if (!inputs.legal_name) {
-      alert("Enter legal business name.");
-      return;
-    }
-
     let tickChecklist = null;
 
     submitBtn.disabled = true;
@@ -679,7 +668,6 @@ document.addEventListener("DOMContentLoaded", () => {
     resetChecklistPending();
     setVerifySidebarStatus("Verifying…");
     document.getElementById("verify-panel")?.setAttribute("open", "");
-    document.getElementById("verify-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
     let checkIdx = 1;
     tickChecklist = setInterval(() => {
@@ -693,7 +681,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       await ensureSession();
 
-      if (!kybPublicFacts && inputs.legal_name.length >= 5) {
+      if (!kybPublicFacts && inputs.legal_name.length >= 3) {
         setLoadingMessage("Searching public records…");
         clearTimeout(searchDebounceTimer);
         await runDebouncedSearch();

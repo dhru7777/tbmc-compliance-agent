@@ -80,23 +80,15 @@
               </div>
             </div>
 
-            <details class="public-record-panel" id="public-record-panel">
-              <summary class="public-record-summary">
-                <span class="public-record-label">Public record</span>
-                <span id="public-record-summary-text" class="public-record-one-liner"></span>
-                <span id="public-record-badge" class="tab-badge hidden"></span>
-              </summary>
-              <div id="kyb-search-loading" class="public-record-loading hidden">Searching…</div>
-              <div id="kyb-public-facts" class="public-record-body"></div>
-            </details>
-
-            <div class="form-group">
-              <label for="kyb_ein">EIN</label>
-              <input type="text" id="kyb_ein" placeholder="XX-XXXXXXX" />
-            </div>
-            <div class="form-group">
-              <label for="kyb_address">Operating address</label>
-              <input type="text" id="kyb_address" placeholder="1209 Orange St, Wilmington, DE 19801" />
+            <div class="form-row address-ein-row">
+              <div class="form-group">
+                <label for="kyb_address">Operating address</label>
+                <input type="text" id="kyb_address" placeholder="1209 Orange St, Wilmington, DE 19801" />
+              </div>
+              <div class="form-group">
+                <label for="kyb_ein">EIN</label>
+                <input type="text" id="kyb_ein" placeholder="XX-XXXXXXX" />
+              </div>
             </div>
             <div class="form-group">
               <label for="kyb_purpose">Business purpose</label>
@@ -107,23 +99,23 @@
 
           <section class="kyb-section kyb-people-grid">
             <div class="kyb-people-col">
-              <h3 class="kyb-section-title">Beneficial owners —</h3>
+              <h3 class="kyb-section-title">Beneficial owners (25%+)</h3>
               <div id="owners-list"></div>
-              <button type="button" class="btn btn-secondary" id="add-owner-btn">+ Add owner</button>
+              <button type="button" class="btn btn-secondary btn-add-row" id="add-owner-btn">+ Add owner</button>
             </div>
             <div class="kyb-people-col">
-              <h3 class="kyb-section-title">Control persons —</h3>
+              <h3 class="kyb-section-title">Control persons</h3>
               <div id="persons-list"></div>
-              <button type="button" class="btn btn-secondary" id="add-person-btn">+ Add control person</button>
+              <button type="button" class="btn btn-secondary btn-add-row" id="add-person-btn">+ Add control person</button>
             </div>
           </section>
 
           <section class="kyb-section documents-section">
             <h3 class="kyb-section-title">Documents</h3>
-            <div class="form-group compact-file">
+            <div class="doc-upload-row">
               <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
+              <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
             </div>
-            <button type="button" class="btn btn-secondary" id="enterprise-add-doc">+ Add selected files</button>
             <ul class="doc-list" id="enterprise-doc-list"></ul>
           </section>
 
@@ -133,13 +125,25 @@
           </div>
         </div>
 
-        <details class="verify-panel" id="verify-panel">
-          <summary class="verify-panel-summary">
-            <span>Verification</span>
-            <span id="verify-sidebar-status" class="verify-sidebar-status">Ready</span>
-          </summary>
-          <ul class="verify-checklist" id="verify-checklist"></ul>
-        </details>
+        <aside class="kyb-sidebar">
+          <details class="public-record-panel" id="public-record-panel">
+            <summary class="public-record-summary">
+              <span class="public-record-label">Public record</span>
+              <span id="public-record-summary-text" class="public-record-one-liner"></span>
+              <span id="public-record-badge" class="tab-badge hidden"></span>
+            </summary>
+            <div id="kyb-search-loading" class="public-record-loading hidden">Searching…</div>
+            <div id="kyb-public-facts" class="public-record-body"></div>
+          </details>
+
+          <details class="verify-panel" id="verify-panel">
+            <summary class="verify-panel-summary">
+              <span>Verification</span>
+              <span id="verify-sidebar-status" class="verify-sidebar-status">Ready</span>
+            </summary>
+            <ul class="verify-checklist" id="verify-checklist"></ul>
+          </details>
+        </aside>
       </div>
     </div>
 

@@ -74,6 +74,29 @@ def _should_refresh_public(session: dict, legal_name: str, state: str) -> bool:
     return False
 
 
+def _enrich_claims_from_documents(user: dict, extractions: list[dict]) -> None:
+    """Fill empty form fields from AI doc extractions when available."""
+    for ext in extractions:
+        extracted = ext.get("extracted") or {}
+        if not user.get("legal_name"):
+            name = as_text(extracted.get("entity_name") or extracted.get("legal_name"))
+            if name:
+                user["legal_name"] = name
+        if not user.get("ein"):
+            ein = as_text(extracted.get("ein"))
+            if ein:
+                user["ein"] = ein
+        if not user.get("operating_address"):
+            addr = as_text(extracted.get("address"))
+            if addr:
+                user["operating_address"] = addr
+        if not user.get("state"):
+            addr = as_text(extracted.get("address"))
+            state = kyb_rules.extract_state_from_address(addr) if addr else None
+            if state:
+                user["state"] = state
+
+
 async def run_verify(
     session: dict,
     uploads: list[tuple[str, str, bytes]],
@@ -90,6 +113,12 @@ async def run_verify(
     legal_name = user.get("legal_name", "")
     state = user.get("state", "")
 
+    # --- AI: parse documents first (may supply name, EIN, address) ---
+    doc_extractions = await doc_parser.parse_uploads(uploads)
+    _enrich_claims_from_documents(user, doc_extractions)
+    legal_name = user.get("legal_name", "")
+    state = user.get("state", "")
+
     if refresh_public is None:
         refresh_public = _should_refresh_public(session, legal_name, state)
     elif not refresh_public and legal_name and not session.get("public_facts"):
@@ -102,15 +131,13 @@ async def run_verify(
         session["public_facts"] = public_facts
 
     ai_public = {
-        "legal_name": legal_name,
+        "legal_name": legal_name or None,
         "state": state or None,
         "public_facts": public_facts,
         "search_method": (public_facts or {}).get("search_method"),
         "confidence": (public_facts or {}).get("confidence"),
     }
 
-    # --- AI: parse each uploaded document (in memory) ---
-    doc_extractions = await doc_parser.parse_uploads(uploads)
     ai_documents = {
         "count": len(doc_extractions),
         "extractions": [
