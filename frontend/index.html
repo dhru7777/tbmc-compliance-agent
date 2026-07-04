@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compliance Check Agent — The Better Money Company</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="landing-active">
+
+  <header class="site-header">
+    <div class="logo">
+      <svg class="logo-mark" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <circle cx="14" cy="14" r="13" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <rect x="7" y="7" width="14" height="14" fill="currentColor"/>
+      </svg>
+      <span>The Better Money Company</span>
+    </div>
+  </header>
+
+  <!-- Landing -->
+  <main id="landing" class="section active">
+    <div class="landing-content">
+      <section class="landing-intro">
+        <h1>Compliance Check agent</h1>
+        <p>Verify businesses and stablecoin issuers for clearinghouse admission.</p>
+      </section>
+
+      <section class="path-grid">
+        <div class="path-card" id="go-enterprise" role="button" tabindex="0">
+          <h2>I'm a Business / Enterprise</h2>
+          <p>
+            Verify your company for clearinghouse admission. Enter your details,
+            upload KYB documents, and see public record matches on one page.
+          </p>
+          <span class="arrow">Start KYB verification →</span>
+        </div>
+
+        <div class="path-card" id="go-issuer" role="button" tabindex="0">
+          <h2>I'm a Stablecoin Issuer</h2>
+          <p>
+            Submit reserve disclosures for GENIUS Act compliance review.
+            Enter your issuer name (e.g. Circle) and stablecoin (e.g. USDC).
+          </p>
+          <span class="arrow">Start issuer compliance →</span>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Enterprise KYB Wizard -->
+  <section id="enterprise" class="section">
+    <div class="section-header">
+      <button type="button" class="back-link">← Back</button>
+      <h1>Enterprise KYB Verification</h1>
+    </div>
+
+    <div class="wizard-steps" id="wizard-steps">
+      <span class="wizard-step-dot active" data-step="1">1. Application</span>
+      <span class="wizard-step-dot" data-step="2">2. Scorecard</span>
+    </div>
+
+    <!-- Single-page application -->
+    <div class="wizard-panel active" id="kyb-step-1">
+      <div class="kyb-layout">
+        <div class="kyb-main">
+          <section class="kyb-section">
+            <h3 class="kyb-section-title">Company details</h3>
+            <div class="form-row two-col">
+              <div class="form-group">
+                <label for="kyb_legal_name">Legal business name</label>
+                <input type="text" id="kyb_legal_name" placeholder="The Better Money Company" autocomplete="organization" />
+              </div>
+              <div class="form-group">
+                <label for="kyb_state">State (optional)</label>
+                <input type="text" id="kyb_state" placeholder="DE" maxlength="2" autocomplete="address-level1" />
+              </div>
+            </div>
+
+            <details class="public-record-panel" id="public-record-panel">
+              <summary class="public-record-summary">
+                <span class="public-record-label">Public record</span>
+                <span id="public-record-summary-text" class="public-record-one-liner"></span>
+                <span id="public-record-badge" class="tab-badge hidden"></span>
+              </summary>
+              <div id="kyb-search-loading" class="public-record-loading hidden">Searching…</div>
+              <div id="kyb-public-facts" class="public-record-body"></div>
+            </details>
+
+            <div class="form-group">
+              <label for="kyb_ein">EIN (optional)</label>
+              <input type="text" id="kyb_ein" placeholder="XX-XXXXXXX" />
+            </div>
+            <div class="form-group">
+              <label for="kyb_address">Operating address</label>
+              <input type="text" id="kyb_address" placeholder="1209 Orange St, Wilmington, DE 19801" />
+            </div>
+            <div class="form-group">
+              <label for="kyb_purpose">Business purpose</label>
+              <input type="text" id="kyb_purpose" placeholder="Stablecoin clearinghouse" />
+            </div>
+            <div id="kyb-cross-check-preview"></div>
+          </section>
+
+          <section class="kyb-section kyb-people-grid">
+            <div class="kyb-people-col">
+              <h3 class="kyb-section-title">Beneficial owners (25%+)</h3>
+              <div id="owners-list"></div>
+              <button type="button" class="btn btn-secondary" id="add-owner-btn">+ Add owner</button>
+            </div>
+            <div class="kyb-people-col">
+              <h3 class="kyb-section-title">Control persons</h3>
+              <div id="persons-list"></div>
+              <button type="button" class="btn btn-secondary" id="add-person-btn">+ Add control person</button>
+            </div>
+          </section>
+
+          <section class="kyb-section documents-section">
+            <h3 class="kyb-section-title">Documents</h3>
+            <div class="form-group compact-file">
+              <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
+            </div>
+            <button type="button" class="btn btn-secondary" id="enterprise-add-doc">+ Add selected files</button>
+            <ul class="doc-list" id="enterprise-doc-list"></ul>
+          </section>
+
+          <div class="kyb-submit-row">
+            <button type="button" class="btn btn-primary btn-block" id="kyb-submit-btn">Run verification</button>
+            <div id="kyb-submit-loading" class="loading-text hidden">Extracting documents and running cross-check…</div>
+          </div>
+        </div>
+
+        <details class="verify-panel" id="verify-panel">
+          <summary class="verify-panel-summary">
+            <span>Verification</span>
+            <span id="verify-sidebar-status" class="verify-sidebar-status">Ready</span>
+          </summary>
+          <ul class="verify-checklist" id="verify-checklist"></ul>
+        </details>
+      </div>
+    </div>
+
+    <!-- Scorecard -->
+    <div class="wizard-panel" id="kyb-step-2">
+      <div id="kyb-scorecard"></div>
+      <div class="wizard-nav">
+        <button type="button" class="btn btn-secondary" id="kyb-step2-back">← Back to application</button>
+        <button type="button" class="btn btn-secondary" id="kyb-download-md">View audit record (MD)</button>
+      </div>
+      <pre id="kyb-md-preview" class="hidden" style="margin-top:1rem;font-size:0.75rem;max-height:300px;overflow:auto;background:var(--bg-elevated);padding:1rem;border-radius:8px;"></pre>
+    </div>
+  </section>
+
+  <!-- Issuer compliance -->
+  <section id="issuer" class="section">
+    <div class="section-header">
+      <button type="button" class="back-link">← Back</button>
+      <h1>Issuer Compliance Verification</h1>
+      <p>Enter your issuer details and add reserve disclosure documents one at a time.</p>
+    </div>
+
+    <form id="issuer-form">
+      <div class="form-group">
+        <label for="issuer_name">Issuer name</label>
+        <input type="text" id="issuer_name" name="issuer_name" placeholder="Circle" required />
+      </div>
+
+      <div class="form-group">
+        <label for="stablecoin_ticker">Stablecoin ticker</label>
+        <input type="text" id="stablecoin_ticker" name="stablecoin_ticker" list="ticker-suggestions" placeholder="USDC" required />
+        <datalist id="ticker-suggestions">
+          <option value="USDC"></option>
+          <option value="PYUSD"></option>
+          <option value="USDG"></option>
+          <option value="RLUSD"></option>
+          <option value="frxUSD"></option>
+        </datalist>
+        <p class="hint">Supported on TBMC: USDC, USDG, PYUSD, SBC, CASH, mUSD, frxUSD, RLUSD.</p>
+      </div>
+
+      <div class="documents-section">
+        <h3>Reserve disclosures</h3>
+        <p class="subtitle">Add one document at a time — monthly reserve report, attestation, etc.</p>
+
+        <div class="add-doc-row">
+          <input type="text" id="issuer-doc-label" placeholder="Document name (e.g. Monthly reserve report)" />
+        </div>
+        <div class="form-group">
+          <input type="file" id="issuer-doc-file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" />
+        </div>
+        <button type="button" class="btn btn-secondary" id="issuer-add-doc">+ Add document</button>
+
+        <ul class="doc-list" id="issuer-doc-list"></ul>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Submit for compliance review</button>
+    </form>
+
+    <div id="issuer-result" class="result-panel"></div>
+  </section>
+
+  <footer class="site-footer">
+    The Better Money Company
+  </footer>
+
+  <script src="js/app.js?v=10"></script>
+</body>
+</html>
