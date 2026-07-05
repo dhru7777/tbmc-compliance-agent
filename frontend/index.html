@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=28" />
+  <link rel="stylesheet" href="css/styles.css?v=34" />
 </head>
 <body class="landing-active">
 
@@ -93,6 +93,24 @@
             </div>
           </section>
 
+          <section class="kyb-section documents-section">
+            <h3 class="kyb-section-title">Documents <span class="field-required">Required</span></h3>
+            <div class="demo-company-row">
+              <label for="demo-company-select">Trial company</label>
+              <select id="demo-company-select">
+                <option value="">Select sample package…</option>
+              </select>
+              <p id="demo-company-hint" class="demo-company-hint hidden"></p>
+              <p id="demo-company-status" class="demo-company-status hidden"></p>
+            </div>
+            <p class="kyb-section-hint">Choose a trial package (3 complete, 2 incomplete) or upload your own formation document.</p>
+            <div class="doc-upload-row">
+              <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
+              <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
+            </div>
+            <ul class="doc-list" id="enterprise-doc-list"></ul>
+          </section>
+
           <section class="kyb-section kyb-people-grid">
             <div class="kyb-people-col">
               <h3 class="kyb-section-title">Beneficial owners (25%+)</h3>
@@ -104,23 +122,6 @@
               <div id="persons-list"></div>
               <button type="button" class="btn btn-secondary btn-add-row" id="add-person-btn">+ Add control person</button>
             </div>
-          </section>
-
-          <section class="kyb-section documents-section">
-            <h3 class="kyb-section-title">Documents <span class="field-required">Required</span></h3>
-            <div class="demo-company-row">
-              <label for="demo-company-select">Trial company</label>
-              <select id="demo-company-select">
-                <option value="">Select sample package…</option>
-              </select>
-              <p id="demo-company-hint" class="demo-company-hint hidden"></p>
-            </div>
-            <p class="kyb-section-hint">Upload at least one formation or SOS document, or choose a trial package above. Trial PDFs are regenerated on each selection and run.</p>
-            <div class="doc-upload-row">
-              <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
-              <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
-            </div>
-            <ul class="doc-list" id="enterprise-doc-list"></ul>
           </section>
 
           <div class="kyb-submit-row">
@@ -216,6 +217,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=33"></script>
+  <script src="js/app.js?v=34"></script>
 </body>
 </html>

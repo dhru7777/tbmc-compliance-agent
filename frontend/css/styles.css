@@ -993,6 +993,32 @@ body.landing-active .site-footer {
   display: none;
 }
 
+.demo-company-status {
+  margin: 0.45rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.demo-company-status.error {
+  color: var(--error);
+}
+
+.demo-company-status.hidden {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .documents-section {
+    order: -1;
+  }
+
+  .kyb-main {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
 .admission-panel {
   margin-bottom: 1rem;
   padding: 0.75rem 1rem;

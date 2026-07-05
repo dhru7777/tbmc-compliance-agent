@@ -613,17 +613,35 @@ function setLoadingMessage(text) {
 
 async function loadDemoCompanyOptions() {
   const select = document.getElementById("demo-company-select");
+  const statusEl = document.getElementById("demo-company-status");
   if (!select) return;
+  if (statusEl) {
+    statusEl.classList.add("hidden");
+    statusEl.classList.remove("error");
+  }
   try {
     const data = await apiJson("/api/enterprise/demo-companies", null, "GET", 10000);
     const companies = data.companies || [];
+    if (!companies.length) throw new Error("No trial packages returned");
     select.innerHTML =
       '<option value="">Select sample package…</option>' +
       companies
         .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`)
         .join("");
-  } catch {
+    if (statusEl) {
+      statusEl.textContent = `${companies.length} trial packages available (${companies.filter((c) => c.complete).length} complete, ${companies.filter((c) => !c.complete).length} incomplete).`;
+      statusEl.classList.remove("hidden");
+    }
+  } catch (err) {
     select.innerHTML = '<option value="">Trial packages unavailable</option>';
+    if (statusEl) {
+      statusEl.textContent =
+        err.message?.includes("Cannot reach API")
+          ? err.message
+          : "Trial packages could not load. Check that the backend is deployed with the latest code.";
+      statusEl.classList.add("error");
+      statusEl.classList.remove("hidden");
+    }
   }
 }
 
