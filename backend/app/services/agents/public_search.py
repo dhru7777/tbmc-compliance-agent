@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from app.services import api_cache, llm_search
 from app.services.agents import llm_client
 from app.services.llm_usage import UsageSession
@@ -81,7 +83,8 @@ Return JSON only:
     )
 
     try:
-        facts = llm_client.call_json(
+        facts = await asyncio.to_thread(
+            llm_client.call_json,
             api_key=api_key,
             prompt=prompt,
             max_tokens=llm_client.SEARCH_OUTPUT_MAX,

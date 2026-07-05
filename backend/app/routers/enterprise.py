@@ -190,9 +190,16 @@ async def kyb_submit_stream(
             await queue.put(None)
 
     async def event_generator():
+        yield f"data: {json.dumps({'type': 'ping', 'message': 'connected'})}\n\n"
         task = asyncio.create_task(run_submit())
         while True:
-            step = await queue.get()
+            try:
+                step = await asyncio.wait_for(queue.get(), timeout=12.0)
+            except asyncio.TimeoutError:
+                if task.done():
+                    break
+                yield f"data: {json.dumps({'type': 'ping', 'message': 'processing'})}\n\n"
+                continue
             if step is None:
                 break
             yield f"data: {json.dumps(step)}\n\n"

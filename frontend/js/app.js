@@ -1,6 +1,6 @@
 const API_BASE = (window.TBMC_CONFIG && window.TBMC_CONFIG.API_BASE) || "http://127.0.0.1:8000";
 const SEARCH_TIMEOUT_MS = 90000;
-const SUBMIT_TIMEOUT_MS = 180000;
+const SUBMIT_TIMEOUT_MS = 300000;
 
 let kybSessionId = null;
 let kybPublicFacts = null;
@@ -298,6 +298,7 @@ async function submitWithAgentStream(formData, signal) {
       const line = part.trim();
       if (!line.startsWith("data:")) continue;
       const payload = JSON.parse(line.slice(5).trim());
+      if (payload.type === "ping") continue;
       if (payload.type === "complete") {
         finalResult = payload;
       } else if (payload.type === "error") {

@@ -115,13 +115,22 @@ async def extract_uploads(
     )
 
     results: list[dict] = []
+    extract_tasks = []
     for label, filename, content in uploads:
         text = extract_text_from_upload(filename, content)
-        extraction = await extract_document(
-            label, text or f"[unreadable: {filename}]", usage_session
+        extract_tasks.append(
+            (
+                label,
+                filename,
+                len(text),
+                extract_document(label, text or f"[unreadable: {filename}]", usage_session),
+            )
         )
+
+    gathered = await asyncio.gather(*(t[3] for t in extract_tasks))
+    for (label, filename, text_len, _), extraction in zip(extract_tasks, gathered):
         extraction["filename"] = filename
-        extraction["text_length"] = len(text)
+        extraction["text_length"] = text_len
         results.append(extraction)
         entity = (extraction.get("extracted") or {}).get("entity_name") or "—"
         await trace.emit(
@@ -129,7 +138,7 @@ async def extract_uploads(
             "doc_extractor",
             f"Parsed «{label}» — entity hint: {entity}",
             label=label,
-            text_length=len(text),
+            text_length=text_len,
             from_cache=bool(extraction.get("from_cache")),
         )
 

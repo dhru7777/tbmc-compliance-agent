@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.services import kyb_rules
@@ -68,7 +69,8 @@ async def run_kyb_pipeline(
 
     # --- ReAct loop ---
     for round_num in range(1, MAX_REACT_ROUNDS + 1):
-        decision = research_planner.plan_next_action(
+        decision = await asyncio.to_thread(
+            research_planner.plan_next_action,
             claims=claims,
             gap_list=gap_list,
             public_facts=public_facts,
