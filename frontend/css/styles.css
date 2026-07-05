@@ -800,16 +800,22 @@ body.landing-active .site-footer {
 .verify-item.pass .verify-badge {
   background: rgba(34, 197, 94, 0.15);
   color: var(--success);
+  min-width: 4.5rem;
+  text-align: center;
 }
 
 .verify-item.flag .verify-badge {
   background: rgba(230, 81, 0, 0.12);
   color: #e65100;
+  min-width: 4.5rem;
+  text-align: center;
 }
 
 .verify-item.block .verify-badge {
   background: rgba(239, 68, 68, 0.12);
   color: var(--error);
+  min-width: 4.5rem;
+  text-align: center;
 }
 
 .verify-item.checking .verify-badge {
@@ -818,7 +824,15 @@ body.landing-active .site-footer {
 }
 
 .verify-item.skip .verify-badge {
+  background: rgba(148, 163, 184, 0.12);
   color: var(--text-muted);
+  min-width: 4.5rem;
+  text-align: center;
+}
+
+.verify-item.pending .verify-badge {
+  min-width: 4.5rem;
+  text-align: center;
 }
 
 .agent-trace-loading {

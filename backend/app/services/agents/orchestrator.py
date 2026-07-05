@@ -34,10 +34,10 @@ async def run_kyb_pipeline(
         "think",
         "orchestrator",
         "Starting verification — documents first, then research planner decides on public search.",
-        label="docs then plan",
+        label="start verification",
     )
 
-    # --- ACT: document extraction ---
+    # --- Document extraction (per-file think / act / observe) ---
     doc_extractions = await doc_extractor.extract_uploads(uploads, trace, usage)
     gaps.enrich_claims_from_documents(user, doc_extractions)
 
@@ -59,20 +59,6 @@ async def run_kyb_pipeline(
     public_facts = session.get("public_facts")
     last_search: dict | None = None
     search_performed = False
-
-    await trace.emit(
-        "observe",
-        "orchestrator",
-        f"Merged claims — name: {claims.get('legal_name') or '—'}, "
-        f"docs: {claims.get('document_count')}, public gaps: {len(gaps.public_gaps_remain(gap_list))}",
-        label=short_words(
-            f"{claims.get('legal_name') or 'entity'} {claims.get('document_count')} docs "
-            f"{len(gaps.public_gaps_remain(gap_list))} gaps",
-            4,
-        ),
-        claims=claims,
-        gaps=gap_list,
-    )
 
     # --- ReAct loop ---
     for round_num in range(1, MAX_REACT_ROUNDS + 1):
@@ -101,36 +87,9 @@ async def run_kyb_pipeline(
         )
 
         if action == "skip_search":
-            await trace.emit(
-                "act",
-                "research_planner",
-                reason or "Skipping public web search — submitted materials satisfy public verification needs.",
-                label=act_label,
-                reason=reason,
-            )
-            await trace.emit(
-                "observe",
-                "research_planner",
-                reason or "No public search required.",
-                label=observe_label_for_action("skip_search"),
-                search_performed=False,
-            )
             break
 
         if action == "finish":
-            await trace.emit(
-                "act",
-                "research_planner",
-                reason or "Research complete — proceeding to scorecard.",
-                label=act_label,
-                reason=reason,
-            )
-            await trace.emit(
-                "observe",
-                "research_planner",
-                reason or "Research phase complete.",
-                label=observe_label_for_action("finish"),
-            )
             break
 
         if action == "need_internal":
@@ -220,34 +179,27 @@ async def run_kyb_pipeline(
     scorecard = kyb_rules.build_scorecard(session)
     doc_cross_checks = cross_check_documents(user, public_facts, doc_extractions)
     kyb_status = scorecard.get("kyb_status", "unknown")
+    flags_count = scorecard.get("flags_count", 0)
+    blocks_count = scorecard.get("blocks_count", 0)
 
-    for item in scorecard["items"]:
-        await trace.emit(
-            "checklist",
-            "orchestrator",
-            item.get("detail") or item.get("item", ""),
-            label=short_words(item.get("item", "check"), 4),
-            num=item["num"],
-            result=item["result"],
-            detail=item.get("detail", ""),
-            recommendation=item.get("recommendation", ""),
-            item_name=item.get("item", ""),
-        )
+    if flags_count:
+        summary_label = short_words(f"{flags_count} item{'s' if flags_count != 1 else ''} need review", 4)
+    elif blocks_count:
+        summary_label = short_words(f"blocked {blocks_count} item{'s' if blocks_count != 1 else ''}", 4)
+    elif kyb_status == "passed":
+        summary_label = "admission approved"
+    else:
+        summary_label = short_words(f"done {kyb_status}", 4)
 
-    await trace.emit(
-        "act",
-        "orchestrator",
-        f"Scorecard built — status: {kyb_status}.",
-        label="score ten items",
-    )
     await trace.emit(
         "observe",
         "orchestrator",
-        f"Verification complete — status: {kyb_status}. "
-        f"Public search {'performed' if search_performed else 'not required'}.",
-        label=short_words(f"done {kyb_status}", 4),
+        f"Verification complete — status: {kyb_status}.",
+        label=summary_label,
         search_performed=search_performed,
         kyb_status=kyb_status,
+        flags_count=flags_count,
+        blocks_count=blocks_count,
     )
 
     usage.print_run_summary(session_id=session_id)

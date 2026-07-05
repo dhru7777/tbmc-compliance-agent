@@ -4,6 +4,8 @@ const SUBMIT_TIMEOUT_MS = 300000;
 let kybSessionId = null;
 let checklistTemplate = [];
 let checklistAnimationToken = 0;
+/** Locked results for the current verification run — trace animation must not wipe these. */
+let checklistRunState = {};
 const owners = [];
 const controlPersons = [];
 const pendingDocs = [];
@@ -118,14 +120,27 @@ function checklistStateClass(result) {
   }[result] || "pending";
 }
 
+function isFinalChecklistResult(result) {
+  return result === "PASS" || result === "FLAG" || result === "BLOCK" || result === "SKIP";
+}
+
 function renderVerifyChecklist(items) {
   const list = document.getElementById("verify-checklist");
   if (!list) return;
   list.innerHTML = items
     .map((item) => {
-      const state = item.state || item.result || "PENDING";
+      const locked = checklistRunState[item.num];
+      const state = locked?.result || item.state || item.result || "PENDING";
       const cls = checklistStateClass(state);
-      return `<li class="verify-item ${cls}" data-num="${item.num}">
+      const detail = locked?.detail || item.detail || "";
+      const recommendation = locked?.recommendation || item.recommendation || "";
+      const title =
+        detail && isFinalChecklistResult(state)
+          ? recommendation
+            ? `${detail}\n\n→ ${recommendation}`
+            : detail
+          : "";
+      return `<li class="verify-item ${cls}" data-num="${item.num}"${title ? ` title="${escapeHtml(title)}"` : ""}>
         <span class="verify-num">${item.num}</span>
         <div class="verify-copy">
           <span class="verify-name">${escapeHtml(item.item)}</span>
@@ -137,53 +152,84 @@ function renderVerifyChecklist(items) {
     .join("");
 }
 
+function rememberChecklistResult(num, result, detail, recommendation) {
+  if (!isFinalChecklistResult(result)) return;
+  checklistRunState[num] = { result, detail: detail || "", recommendation: recommendation || "" };
+  const item = checklistTemplate.find((i) => i.num === num);
+  if (item) {
+    item.state = result;
+    item.result = result;
+    item.detail = detail || "";
+    item.recommendation = recommendation || "";
+  }
+}
+
 function setVerifyItemState(num, result, detail, recommendation) {
+  if (result === "CHECKING" && checklistRunState[num]) return;
+
+  rememberChecklistResult(num, result, detail, recommendation);
+
   const row = document.querySelector(`.verify-item[data-num="${num}"]`);
   if (!row) return;
   row.className = `verify-item ${checklistStateClass(result)}`;
   row.querySelector(".verify-badge").textContent = checklistStatusLabel(result);
-  if (detail && result !== "CHECKING" && result !== "PENDING") {
+  if (detail && isFinalChecklistResult(result)) {
     row.title = recommendation ? `${detail}\n\n→ ${recommendation}` : detail;
+  } else if (result === "CHECKING") {
+    row.removeAttribute("title");
   }
 }
 
-const DOC_CHECKLIST_ITEMS = [2, 7, 8, 9, 10];
-const PUBLIC_CHECKLIST_ITEMS = [1, 3, 4, 5];
+function syncChecklistFromScorecard(items) {
+  for (const item of items || []) {
+    rememberChecklistResult(item.num, item.result, item.detail, item.recommendation);
+  }
+  renderVerifyChecklist(checklistTemplate);
+}
+
 
 function markChecklistChecking(nums) {
-  nums.forEach((n) => setVerifyItemState(n, "CHECKING"));
+  nums.forEach((n) => {
+    if (!checklistRunState[n]) setVerifyItemState(n, "CHECKING");
+  });
 }
 
 function markChecklistForTraceStep(step) {
-  if (!step || step.type === "ping" || step.type === "checklist" || step.type === "complete") return;
-
-  if (step.agent === "doc_extractor" && step.type === "act") {
-    markChecklistChecking(DOC_CHECKLIST_ITEMS);
-    return;
-  }
-
-  if (step.agent === "public_search" && (step.type === "think" || step.type === "act")) {
-    markChecklistChecking(PUBLIC_CHECKLIST_ITEMS);
-    return;
-  }
-
+  if (!step || step.type === "ping" || step.type === "complete") return;
   const label = (step.label || "").toLowerCase();
-  if (step.agent === "orchestrator" && step.type === "think" && label.includes("rule")) {
+  if (step.agent === "orchestrator" && step.type === "think" && label.includes("apply rule")) {
     markChecklistChecking(Array.from({ length: 10 }, (_, i) => i + 1));
   }
 }
 
-function applyChecklistItemLive(item) {
-  setVerifyItemState(item.num, "CHECKING");
-  return sleep(160).then(() => {
-    setVerifyItemState(item.num, item.result, item.detail, item.recommendation);
-  });
+function applyTraceSideEffects(step) {
+  if (!step || step.type === "ping") return;
+  markChecklistForTraceStep(step);
+  if (step.type === "observe" && step.checklist_num && step.checklist_result) {
+    setVerifyItemState(
+      step.checklist_num,
+      step.checklist_result,
+      step.checklist_detail,
+      step.checklist_recommendation
+    );
+  }
 }
 
-function enqueueChecklistItem(item) {
-  traceStepQueue = traceStepQueue
-    .then(() => applyChecklistItemLive(item))
-    .catch(() => {});
+function shouldShowTraceStep(step) {
+  if (!step || step.type === "ping") return false;
+  if (step.type === "error") return true;
+  if (step.type === "finished" || step.type === "complete") return false;
+  if (!REACT_PHASES.has(step.type)) return false;
+  if (step.checklist_num) return false;
+  const label = traceStepLabel(step);
+  if (step.type === "act" && label === "apply rule") return false;
+  if (step.agent === "research_planner" && step.type !== "think") return false;
+  if (step.claims) return false;
+  return true;
+}
+
+function traceStepLabel(step) {
+  return (step.label || shortWords(step.message, 4)).toLowerCase();
 }
 
 function applyScorecardFallback(items, appliedNums) {
@@ -259,28 +305,15 @@ function startTraceRow(label) {
   scrollTraceList();
 }
 
-function shouldSkipTraceStep(step, label) {
-  if (step.agent === "orchestrator" && step.type === "think" && label.includes("docs then")) return true;
-  if (step.agent === "orchestrator" && step.type === "observe" && (step.message || "").includes("Merged claims")) return true;
-  return false;
-}
-
 async function playTraceStep(step) {
   if (!step || step.type === "ping") return;
 
-  const epoch = traceQueueEpoch;
-  markChecklistForTraceStep(step);
-  const label = (step.label || shortWords(step.message, 4)).toLowerCase();
-  const pause = (ms) => sleep(ms).then(() => epoch === traceQueueEpoch);
+  applyTraceSideEffects(step);
+  if (!shouldShowTraceStep(step)) return;
 
-  if (step.type === "finished" || step.type === "complete") {
-    startTraceRow((step.label || shortWords(`done ${step.kyb_status || ""}`, 4)).toLowerCase());
-    if (await pause(TRACE_PHASE_MS.complete)) {
-      completeActiveTraceRow();
-      setAgentTraceStatus("Done");
-    }
-    return;
-  }
+  const epoch = traceQueueEpoch;
+  const label = traceStepLabel(step);
+  const pause = (ms) => sleep(ms).then(() => epoch === traceQueueEpoch);
 
   if (step.type === "error") {
     startTraceRow(shortWords(step.message, 4));
@@ -292,8 +325,6 @@ async function playTraceStep(step) {
     return;
   }
 
-  if (!REACT_PHASES.has(step.type) || shouldSkipTraceStep(step, label)) return;
-
   startTraceRow(label);
   if (step.type === "think") setAgentTraceStatus("Thinking…");
   else if (step.type === "act") setAgentTraceStatus("Acting…");
@@ -301,8 +332,11 @@ async function playTraceStep(step) {
 
   const ms = TRACE_PHASE_MS[step.type] || 420;
   if (await pause(ms)) {
-    completeActiveTraceRow();
+    completeActiveTraceRow(label);
     scrollTraceList();
+    if (step.type === "observe" && step.kyb_status) {
+      setAgentTraceStatus("Done");
+    }
   }
 }
 
@@ -344,27 +378,15 @@ async function submitWithAgentStream(formData, signal) {
       const payload = JSON.parse(line.slice(5).trim());
       if (payload.type === "ping") continue;
 
-      if (payload.type === "checklist" && payload.num) {
-        const item = {
-          num: payload.num,
-          result: payload.result,
-          detail: typeof payload.detail === "string" ? payload.detail : payload.message,
-          recommendation: payload.recommendation,
-        };
-        if (!appliedChecklist.has(item.num)) {
-          appliedChecklist.add(item.num);
-          enqueueChecklistItem(item);
-        }
-        continue;
-      }
-
       if (payload.type === "complete" && payload.session_id) {
         finalResult = payload;
         applyScorecardFallback(payload.scorecard?.items, appliedChecklist);
-        enqueueAgentTraceStep({ type: "finished", label: payload.scorecard?.kyb_status || "done" });
       } else if (payload.type === "error") {
         throw new Error(payload.message || "Verification error");
-      } else {
+      } else if (REACT_PHASES.has(payload.type)) {
+        if (payload.type === "observe" && payload.checklist_num && payload.checklist_result) {
+          appliedChecklist.add(payload.checklist_num);
+        }
         enqueueAgentTraceStep(payload);
       }
     }
@@ -408,7 +430,14 @@ async function loadChecklistTemplate() {
 }
 
 function resetChecklistPending() {
-  checklistTemplate = checklistTemplate.map((i) => ({ ...i, state: "PENDING", result: "PENDING" }));
+  checklistRunState = {};
+  checklistTemplate = checklistTemplate.map((i) => ({
+    ...i,
+    state: "PENDING",
+    result: "PENDING",
+    detail: "",
+    recommendation: "",
+  }));
   renderVerifyChecklist(checklistTemplate);
 }
 
@@ -698,6 +727,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("kyb-step2-back").addEventListener("click", () => {
     setWizardStep(1);
+    renderVerifyChecklist(checklistTemplate);
+    document.getElementById("verify-panel")?.setAttribute("open", "");
   });
 
   document.querySelectorAll(".wizard-step-dot").forEach((dot) => {
@@ -707,6 +738,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const currentStep = current ? parseInt(current.dataset.step, 10) : 1;
       if (target >= currentStep) return;
       setWizardStep(target);
+      if (target === 1) {
+        renderVerifyChecklist(checklistTemplate);
+        document.getElementById("verify-panel")?.setAttribute("open", "");
+      }
     });
   });
 
@@ -823,6 +858,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       setLoadingMessage("Preparing results…");
       await waitForAgentTraceQueue();
+      syncChecklistFromScorecard(data.scorecard?.items);
       document.getElementById("kyb-scorecard").innerHTML = renderScorecard(data);
       await sleep(500);
       await transitionWizardStep(2);
