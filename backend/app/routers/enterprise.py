@@ -123,6 +123,26 @@ def kyb_checklist_template():
     return {"items": kyb_rules.get_checklist_template()}
 
 
+@router.get("/kyb/verifications")
+def kyb_list_verifications(limit: int = 50):
+    """List recent persisted KYB verification records (requires DATABASE_URL)."""
+    from app.services.verification_store import list_verifications
+
+    rows = list_verifications(limit=min(limit, 200))
+    return {"count": len(rows), "verifications": rows}
+
+
+@router.get("/kyb/verifications/{enterprise_id}")
+def kyb_get_verification(enterprise_id: str):
+    """Fetch a persisted verification by enterprise_id (UUID)."""
+    from app.services.verification_store import get_verification_by_id
+
+    record = get_verification_by_id(enterprise_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Verification record not found")
+    return record
+
+
 @router.get("/kyb/{session_id}")
 def kyb_get_session(session_id: str):
     try:
@@ -299,26 +319,6 @@ def kyb_credential(session_id: str):
         return {"session_id": session_id, "credential": cred}
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
-
-
-@router.get("/kyb/verifications")
-def kyb_list_verifications(limit: int = 50):
-    """List recent persisted KYB verification records (requires DATABASE_URL)."""
-    from app.services.verification_store import list_verifications
-
-    rows = list_verifications(limit=min(limit, 200))
-    return {"count": len(rows), "verifications": rows}
-
-
-@router.get("/kyb/verifications/{enterprise_id}")
-def kyb_get_verification(enterprise_id: str):
-    """Fetch a persisted verification by enterprise_id (UUID)."""
-    from app.services.verification_store import get_verification_by_id
-
-    record = get_verification_by_id(enterprise_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Verification record not found")
-    return record
 
 
 @router.get("/kyb/{session_id}/record")
