@@ -2,10 +2,10 @@ import asyncio
 import json
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from app.services import kyb_service
+from app.services import demo_companies, kyb_service
 
 router = APIRouter()
 
@@ -37,6 +37,33 @@ class KybCrossCheckRequest(BaseModel):
 async def kyb_create_session():
     """Create empty session — verification runs on submit via agent orchestrator."""
     return await kyb_service.create_session()
+
+
+@router.get("/demo-companies")
+def list_demo_companies():
+    """Trial company packages for UI dropdown."""
+    return {"companies": demo_companies.list_demo_companies()}
+
+
+@router.get("/demo-companies/{company_id}")
+def get_demo_company_profile(company_id: str):
+    try:
+        return demo_companies.demo_profile(company_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Demo company not found")
+
+
+@router.get("/demo-companies/{company_id}/document.pdf")
+def get_demo_company_pdf(company_id: str):
+    try:
+        pdf_bytes, filename = demo_companies.build_demo_pdf(company_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Demo company not found")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.post("/kyb/{session_id}/search")
@@ -121,6 +148,7 @@ async def kyb_verify(
             label = document_labels[i] if i < len(document_labels) else doc.filename or f"document_{i}"
             content = await doc.read()
             uploads.append((label, doc.filename or "upload", content))
+        _require_documents(uploads)
         return await kyb_service.run_verify_only(
             session_id, uploads, legal_name, state, ein, operating_address, business_purpose, owners, persons
         )
@@ -146,6 +174,14 @@ async def _parse_kyb_submit_form(
     return owners, persons, uploads
 
 
+def _require_documents(uploads: list) -> None:
+    if not uploads:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one document is required. Upload formation or SOS files before running verification.",
+        )
+
+
 @router.post("/kyb/{session_id}/submit/stream")
 async def kyb_submit_stream(
     session_id: str,
@@ -166,6 +202,8 @@ async def kyb_submit_stream(
         )
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
+
+    _require_documents(uploads)
 
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -236,6 +274,7 @@ async def kyb_submit(
         owners, persons, uploads = await _parse_kyb_submit_form(
             beneficial_owners, control_persons, documents, document_labels
         )
+        _require_documents(uploads)
         return await kyb_service.submit_kyb(
             session_id, ein, operating_address, business_purpose, owners, persons, uploads,
             legal_name, state,

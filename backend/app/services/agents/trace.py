@@ -14,11 +14,16 @@ class TraceStep:
     type: str  # think | act | observe | complete | error
     agent: str
     message: str
+    label: str = ""
     detail: dict[str, Any] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        detail = data.pop("detail", None) or {}
+        if detail:
+            data.update(detail)
+        return data
 
 
 class AgentTrace:
@@ -31,9 +36,17 @@ class AgentTrace:
         step_type: str,
         agent: str,
         message: str,
+        *,
+        label: str = "",
         **detail: Any,
     ) -> None:
-        step = TraceStep(type=step_type, agent=agent, message=message, detail=detail)
+        step = TraceStep(
+            type=step_type,
+            agent=agent,
+            message=message,
+            label=label,
+            detail=detail,
+        )
         self.steps.append(step)
         if self._on_step:
             result = self._on_step(step.to_dict())

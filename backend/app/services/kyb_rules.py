@@ -65,7 +65,42 @@ def check_legal_name(user_name: str, public_name: str) -> dict:
     return {"result": "BLOCK", "detail": f"Name mismatch ({score:.0%})"}
 
 
-def check_good_standing(status: str | None) -> dict:
+def _standing_is_negated(text: str) -> bool:
+    lower = text.lower()
+    negation = (
+        "not attached",
+        "not included",
+        "not provided",
+        "missing",
+        "not in good standing",
+        "pending",
+    )
+    return any(n in lower for n in negation)
+
+
+def _standing_is_active(text: str) -> bool:
+    lower = text.lower()
+    if _standing_is_negated(lower):
+        return False
+    active_tokens = ("good standing", "active", "in existence", "current")
+    return any(t in lower for t in active_tokens)
+
+
+def check_good_standing(status: str | None, extractions: list[dict] | None = None) -> dict:
+    extractions = extractions or []
+    if not status:
+        for ext in extractions:
+            extracted = ext.get("extracted") or {}
+            for fact in extracted.get("key_facts") or []:
+                if _standing_is_active(str(fact)):
+                    status = "active"
+                    break
+            if status:
+                break
+            blob = str(extracted).lower()
+            if _standing_is_active(blob) and ("status" in blob or "standing" in blob):
+                status = "active"
+                break
     if not status:
         return {"result": "FLAG", "detail": "Status not found in public search"}
     active_tokens = ("active", "good standing", "in existence", "current")
@@ -419,7 +454,7 @@ def build_scorecard(session: dict) -> dict:
     raw_checks = [
         (1, check_legal_name(user.get("legal_name", ""), public.get("legal_name", ""))),
         (2, check_formation_documents(public, docs)),
-        (3, check_good_standing(public.get("status"))),
+        (3, check_good_standing(public.get("status"), extractions)),
         (4, check_ofac(user.get("legal_name", ""))),
         (5, check_address(user.get("operating_address", ""), public.get("registered_agent_address"))),
         (6, check_purpose(user.get("business_purpose", ""), public.get("naics_or_purpose"))),

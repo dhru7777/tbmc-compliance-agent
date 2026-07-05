@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css?v=28" />
 </head>
 <body class="landing-active">
 
@@ -91,7 +91,6 @@
               <label for="kyb_purpose">Business purpose</label>
               <input type="text" id="kyb_purpose" placeholder="Stablecoin clearinghouse" />
             </div>
-            <div id="kyb-cross-check-preview"></div>
           </section>
 
           <section class="kyb-section kyb-people-grid">
@@ -108,7 +107,15 @@
           </section>
 
           <section class="kyb-section documents-section">
-            <h3 class="kyb-section-title">Documents</h3>
+            <h3 class="kyb-section-title">Documents <span class="field-required">Required</span></h3>
+            <div class="demo-company-row">
+              <label for="demo-company-select">Trial company</label>
+              <select id="demo-company-select">
+                <option value="">Select sample package…</option>
+              </select>
+              <p id="demo-company-hint" class="demo-company-hint hidden"></p>
+            </div>
+            <p class="kyb-section-hint">Upload at least one formation or SOS document, or choose a trial package above.</p>
             <div class="doc-upload-row">
               <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
               <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
@@ -135,18 +142,9 @@
             <ol class="agent-trace-list" id="agent-trace-list"></ol>
           </details>
 
-          <details class="public-record-panel" id="public-record-panel">
-            <summary class="public-record-summary">
-              <span class="public-record-label">Public record</span>
-              <span id="public-record-summary-text" class="public-record-one-liner"></span>
-            </summary>
-            <div id="kyb-public-facts" class="public-record-body"></div>
-            <p id="public-search-skipped" class="public-search-skipped hidden"></p>
-          </details>
-
           <details class="verify-panel" id="verify-panel">
             <summary class="verify-panel-summary">
-              <span>Verification</span>
+              <span class="verify-panel-label">Verification</span>
               <span id="verify-sidebar-status" class="verify-sidebar-status">Ready</span>
             </summary>
             <ul class="verify-checklist" id="verify-checklist"></ul>
@@ -218,6 +216,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=18"></script>
+  <script src="js/app.js?v=28"></script>
 </body>
 </html>

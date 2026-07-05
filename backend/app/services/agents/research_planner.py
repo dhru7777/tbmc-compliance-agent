@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from app.services.agents import gaps, llm_client
+from app.services.agents.trace_labels import act_label_for_action, short_words
 from app.services.llm_usage import UsageSession
+
+
+def _with_labels(decision: dict) -> dict:
+    action = decision.get("action", "finish")
+    reason = decision.get("reason") or ""
+    decision.setdefault("think_label", short_words(decision.get("think_label") or reason, 4))
+    decision.setdefault("act_label", short_words(decision.get("act_label") or act_label_for_action(action), 4))
+    return decision
 
 
 def _deterministic_decision(
@@ -15,40 +24,54 @@ def _deterministic_decision(
     """Fallback when research API key missing or LLM fails."""
     skip, reason = gaps.can_skip_public_search(gap_list)
     if skip:
-        return {
-            "action": "skip_search",
-            "reason": reason,
-            "public_query": None,
-            "missing_for_search": [],
-        }
+        return _with_labels(
+            {
+                "action": "skip_search",
+                "reason": reason,
+                "public_query": None,
+                "missing_for_search": [],
+            }
+        )
     if public_facts and public_facts.get("legal_name"):
-        return {
-            "action": "finish",
-            "reason": "Public facts already retrieved this session.",
-            "public_query": None,
-            "missing_for_search": [],
-        }
+        reason = "Public facts already retrieved this session."
+        return _with_labels(
+            {
+                "action": "finish",
+                "reason": reason,
+                "public_query": None,
+                "missing_for_search": [],
+            }
+        )
     query = gaps.public_search_query({"legal_name": claims.get("legal_name"), "state": claims.get("state")})
     if not query.get("legal_name"):
-        return {
-            "action": "skip_search",
-            "reason": "Cannot search without a legal business name.",
-            "public_query": None,
-            "missing_for_search": ["legal_name"],
-        }
+        reason = "Cannot search without a legal business name."
+        return _with_labels(
+            {
+                "action": "skip_search",
+                "reason": reason,
+                "public_query": None,
+                "missing_for_search": ["legal_name"],
+            }
+        )
     if not query.get("state"):
-        return {
-            "action": "need_internal",
-            "reason": "State required before public registry search.",
-            "public_query": None,
-            "missing_for_search": ["state"],
+        reason = "State required before public registry search."
+        return _with_labels(
+            {
+                "action": "need_internal",
+                "reason": reason,
+                "public_query": None,
+                "missing_for_search": ["state"],
+            }
+        )
+    reason = "Public gaps remain for registry-sourced fields."
+    return _with_labels(
+        {
+            "action": "public_search",
+            "reason": reason,
+            "public_query": query,
+            "missing_for_search": [],
         }
-    return {
-        "action": "public_search",
-        "reason": "Public gaps remain for registry-sourced fields.",
-        "public_query": query,
-        "missing_for_search": [],
-    }
+    )
 
 
 def plan_next_action(
@@ -63,7 +86,7 @@ def plan_next_action(
     """
     THINK step — returns:
       action: skip_search | public_search | need_internal | finish
-      reason, public_query (safe fields only), missing_for_search
+      reason, think_label, act_label, public_query, missing_for_search
     """
     api_key = llm_client.research_api_key()
     if not api_key:
@@ -106,11 +129,14 @@ RULES:
 - action "need_internal" if search would help but legal_name or state is missing — list missing_for_search.
 - action "finish" if public_facts already sufficient or no further public steps help.
 - public_query may ONLY contain legal_name and state (2-letter). NEVER include EIN, addresses, owner names.
+- think_label and act_label MUST be your own 2-4 word phrases (not copied from rules).
 
 Return JSON only:
 {{
   "action": "skip_search|public_search|need_internal|finish",
-  "reason": "one sentence",
+  "reason": "one sentence for audit log",
+  "think_label": "2-4 words: why you chose this",
+  "act_label": "2-4 words: what happens next",
   "public_query": {{"legal_name": "...", "state": "DE"}} or null,
   "missing_for_search": []
 }}"""
@@ -134,7 +160,7 @@ Return JSON only:
                 "legal_name": str(pq.get("legal_name", "")).strip(),
                 "state": str(pq.get("state", "")).strip().upper()[:2],
             }
-        return decision
+        return _with_labels(decision)
     except Exception:
         if usage_session:
             usage_session.add_skip(

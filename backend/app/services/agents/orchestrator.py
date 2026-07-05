@@ -8,6 +8,7 @@ from typing import Any
 from app.services import kyb_rules
 from app.services.agents import doc_extractor, gaps, public_search, research_planner
 from app.services.agents.trace import AgentTrace, StepCallback
+from app.services.agents.trace_labels import observe_label_for_action, short_words
 from app.services.document_cross_check import cross_check_documents
 from app.services.llm_usage import UsageSession
 
@@ -33,6 +34,7 @@ async def run_kyb_pipeline(
         "think",
         "orchestrator",
         "Starting verification — documents first, then research planner decides on public search.",
+        label="docs then plan",
     )
 
     # --- ACT: document extraction ---
@@ -63,6 +65,11 @@ async def run_kyb_pipeline(
         "orchestrator",
         f"Merged claims — name: {claims.get('legal_name') or '—'}, "
         f"docs: {claims.get('document_count')}, public gaps: {len(gaps.public_gaps_remain(gap_list))}",
+        label=short_words(
+            f"{claims.get('legal_name') or 'entity'} {claims.get('document_count')} docs "
+            f"{len(gaps.public_gaps_remain(gap_list))} gaps",
+            4,
+        ),
         claims=claims,
         gaps=gap_list,
     )
@@ -80,11 +87,14 @@ async def run_kyb_pipeline(
         )
         action = decision.get("action", "finish")
         reason = decision.get("reason", "")
+        think_label = decision.get("think_label") or short_words(reason, 4)
+        act_label = decision.get("act_label") or short_words(action.replace("_", " "), 4)
 
         await trace.emit(
             "think",
             "research_planner",
             reason or f"Evaluating round {round_num}…",
+            label=think_label,
             action=action,
             round=round_num,
             missing_for_search=decision.get("missing_for_search") or [],
@@ -94,13 +104,15 @@ async def run_kyb_pipeline(
             await trace.emit(
                 "act",
                 "research_planner",
-                "Skipping public web search — submitted materials satisfy public verification needs.",
+                reason or "Skipping public web search — submitted materials satisfy public verification needs.",
+                label=act_label,
                 reason=reason,
             )
             await trace.emit(
                 "observe",
                 "research_planner",
-                "No public search required.",
+                reason or "No public search required.",
+                label=observe_label_for_action("skip_search"),
                 search_performed=False,
             )
             break
@@ -109,8 +121,15 @@ async def run_kyb_pipeline(
             await trace.emit(
                 "act",
                 "research_planner",
-                "Research complete — proceeding to scorecard.",
+                reason or "Research complete — proceeding to scorecard.",
+                label=act_label,
                 reason=reason,
+            )
+            await trace.emit(
+                "observe",
+                "research_planner",
+                reason or "Research phase complete.",
+                label=observe_label_for_action("finish"),
             )
             break
 
@@ -120,6 +139,7 @@ async def run_kyb_pipeline(
                 "act",
                 "public_search",
                 f"Cannot search yet — need: {', '.join(missing)}",
+                label=act_label,
                 missing_for_search=missing,
             )
             gaps.enrich_claims_from_documents(user, doc_extractions)
@@ -129,6 +149,7 @@ async def run_kyb_pipeline(
                 "observe",
                 "orchestrator",
                 "Re-checked internal sources after search agent feedback.",
+                label=observe_label_for_action("need_internal"),
                 claims=claims,
             )
             continue
@@ -141,6 +162,7 @@ async def run_kyb_pipeline(
                     "act",
                     "public_search",
                     f"Search blocked — missing public fields: {', '.join(missing)}",
+                    label=short_words(f"blocked need {' '.join(missing)}", 4),
                     missing_for_search=missing,
                 )
                 continue
@@ -148,9 +170,16 @@ async def run_kyb_pipeline(
             safe_name = query["legal_name"]
             safe_state = query["state"]
             await trace.emit(
+                "think",
+                "public_search",
+                f"Registry lookup for {safe_name} in {safe_state}.",
+                label=short_words(f"search {safe_state} registry", 4),
+            )
+            await trace.emit(
                 "act",
                 "public_search",
                 f"Searching public registry for «{safe_name}» ({safe_state}) — public fields only.",
+                label=short_words(f"web search {safe_state}", 4),
                 public_query=query,
             )
 
@@ -162,10 +191,12 @@ async def run_kyb_pipeline(
             status = last_search.get("status", "completed")
             summary = last_search.get("summary", "")
             pf_status = (public_facts or {}).get("status", "unknown")
+            observe_msg = f"Registry result: {pf_status} — {summary}"
             await trace.emit(
                 "observe",
                 "public_search",
-                f"Registry result: {pf_status} — {summary}",
+                observe_msg,
+                label=short_words(summary or pf_status or "search done", 4),
                 search_performed=True,
                 status=status,
                 confidence=(public_facts or {}).get("confidence"),
@@ -184,17 +215,39 @@ async def run_kyb_pipeline(
         "think",
         "orchestrator",
         "Running deterministic scorecard rules on merged claims…",
+        label="apply rule checks",
     )
     scorecard = kyb_rules.build_scorecard(session)
     doc_cross_checks = cross_check_documents(user, public_facts, doc_extractions)
+    kyb_status = scorecard.get("kyb_status", "unknown")
+
+    for item in scorecard["items"]:
+        await trace.emit(
+            "checklist",
+            "orchestrator",
+            item.get("detail") or item.get("item", ""),
+            label=short_words(item.get("item", "check"), 4),
+            num=item["num"],
+            result=item["result"],
+            detail=item.get("detail", ""),
+            recommendation=item.get("recommendation", ""),
+            item_name=item.get("item", ""),
+        )
 
     await trace.emit(
-        "complete",
+        "act",
         "orchestrator",
-        f"Verification complete — status: {scorecard.get('kyb_status')}. "
+        f"Scorecard built — status: {kyb_status}.",
+        label="score ten items",
+    )
+    await trace.emit(
+        "observe",
+        "orchestrator",
+        f"Verification complete — status: {kyb_status}. "
         f"Public search {'performed' if search_performed else 'not required'}.",
+        label=short_words(f"done {kyb_status}", 4),
         search_performed=search_performed,
-        kyb_status=scorecard.get("kyb_status"),
+        kyb_status=kyb_status,
     )
 
     usage.print_run_summary(session_id=session_id)

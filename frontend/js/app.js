@@ -1,14 +1,9 @@
 const API_BASE = (window.TBMC_CONFIG && window.TBMC_CONFIG.API_BASE) || "http://127.0.0.1:8000";
-const SEARCH_TIMEOUT_MS = 90000;
 const SUBMIT_TIMEOUT_MS = 300000;
 
 let kybSessionId = null;
-let kybPublicFacts = null;
 let checklistTemplate = [];
 let checklistAnimationToken = 0;
-let searchDebounceTimer = null;
-let crossCheckDebounceTimer = null;
-let searchRequestId = 0;
 const owners = [];
 const controlPersons = [];
 const pendingDocs = [];
@@ -27,15 +22,37 @@ function showLanding() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function setWizardStep(n) {
-  document.querySelectorAll(".wizard-panel").forEach((p) => p.classList.remove("active"));
-  document.getElementById(`kyb-step-${n}`).classList.add("active");
+function updateWizardDots(n) {
   document.querySelectorAll(".wizard-step-dot").forEach((d) => {
     const step = parseInt(d.dataset.step, 10);
     d.classList.remove("active", "done");
     if (step === n) d.classList.add("active");
     else if (step < n) d.classList.add("done");
   });
+}
+
+function setWizardStep(n) {
+  document.querySelectorAll(".wizard-panel").forEach((p) => p.classList.remove("active", "wizard-exiting", "wizard-entering"));
+  document.getElementById(`kyb-step-${n}`).classList.add("active");
+  updateWizardDots(n);
+}
+
+async function transitionWizardStep(n) {
+  const current = document.querySelector(".wizard-panel.active");
+  const next = document.getElementById(`kyb-step-${n}`);
+  if (!next || current === next) {
+    setWizardStep(n);
+    return;
+  }
+  if (current) {
+    current.classList.add("wizard-exiting");
+    await sleep(320);
+    current.classList.remove("active", "wizard-exiting");
+  }
+  next.classList.add("active", "wizard-entering");
+  updateWizardDots(n);
+  await sleep(480);
+  next.classList.remove("wizard-entering");
 }
 
 function escapeHtml(text) {
@@ -130,6 +147,53 @@ function setVerifyItemState(num, result, detail, recommendation) {
   }
 }
 
+const DOC_CHECKLIST_ITEMS = [2, 7, 8, 9, 10];
+const PUBLIC_CHECKLIST_ITEMS = [1, 3, 4, 5];
+
+function markChecklistChecking(nums) {
+  nums.forEach((n) => setVerifyItemState(n, "CHECKING"));
+}
+
+function markChecklistForTraceStep(step) {
+  if (!step || step.type === "ping" || step.type === "checklist" || step.type === "complete") return;
+
+  if (step.agent === "doc_extractor" && step.type === "act") {
+    markChecklistChecking(DOC_CHECKLIST_ITEMS);
+    return;
+  }
+
+  if (step.agent === "public_search" && (step.type === "think" || step.type === "act")) {
+    markChecklistChecking(PUBLIC_CHECKLIST_ITEMS);
+    return;
+  }
+
+  const label = (step.label || "").toLowerCase();
+  if (step.agent === "orchestrator" && step.type === "think" && label.includes("rule")) {
+    markChecklistChecking(Array.from({ length: 10 }, (_, i) => i + 1));
+  }
+}
+
+function applyChecklistItemLive(item) {
+  setVerifyItemState(item.num, "CHECKING");
+  return sleep(160).then(() => {
+    setVerifyItemState(item.num, item.result, item.detail, item.recommendation);
+  });
+}
+
+function enqueueChecklistItem(item) {
+  traceStepQueue = traceStepQueue
+    .then(() => applyChecklistItemLive(item))
+    .catch(() => {});
+}
+
+function applyScorecardFallback(items, appliedNums) {
+  for (const item of items || []) {
+    if (appliedNums.has(item.num)) continue;
+    setVerifyItemState(item.num, item.result, item.detail, item.recommendation);
+    appliedNums.add(item.num);
+  }
+}
+
 function setVerifySidebarStatus(text) {
   const el = document.getElementById("verify-sidebar-status");
   if (el) el.textContent = text;
@@ -141,14 +205,27 @@ function setAgentTraceStatus(text) {
 }
 
 let agentTraceActiveRow = null;
+let traceStepQueue = Promise.resolve();
+let traceQueueEpoch = 0;
+
+const TRACE_PHASE_MS = { think: 420, act: 560, observe: 480, complete: 520 };
+const REACT_PHASES = new Set(["think", "act", "observe"]);
+
+function resetAgentTraceQueue() {
+  traceQueueEpoch += 1;
+  traceStepQueue = Promise.resolve();
+}
 
 function clearAgentTrace() {
+  resetAgentTraceQueue();
   agentTraceActiveRow = null;
   const list = document.getElementById("agent-trace-list");
   if (list) list.innerHTML = "";
-  document.getElementById("public-search-skipped")?.classList.add("hidden");
-  document.getElementById("kyb-public-facts").innerHTML = "";
-  updatePublicRecordSummary(null);
+}
+
+function scrollTraceList() {
+  const list = document.getElementById("agent-trace-list");
+  if (list) list.scrollTop = list.scrollHeight;
 }
 
 function completeActiveTraceRow(doneText) {
@@ -162,113 +239,79 @@ function completeActiveTraceRow(doneText) {
   agentTraceActiveRow = null;
 }
 
-function startTraceRow(text) {
-  completeActiveTraceRow();
+function shortWords(text, max = 4) {
+  if (!text) return "…";
+  const words = String(text)
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.slice(0, max).join(" ").toLowerCase() || "…";
+}
+
+function startTraceRow(label) {
   const list = document.getElementById("agent-trace-list");
   if (!list) return;
   const li = document.createElement("li");
   li.className = "agent-trace-row active";
-  li.innerHTML = `<span class="agent-trace-icon"><span class="agent-spinner" aria-hidden="true"></span></span><span class="agent-trace-text">${escapeHtml(text)}</span>`;
+  li.innerHTML = `<span class="agent-trace-icon"><span class="agent-spinner" aria-hidden="true"></span></span><span class="agent-trace-text">${escapeHtml(label)}</span>`;
   list.appendChild(li);
   agentTraceActiveRow = li;
-  list.scrollTop = list.scrollHeight;
+  scrollTraceList();
 }
 
-function appendAgentTraceStep(step) {
-  if (!step) return;
-  const { type, agent, message = "" } = step;
+function shouldSkipTraceStep(step, label) {
+  if (step.agent === "orchestrator" && step.type === "think" && label.includes("docs then")) return true;
+  if (step.agent === "orchestrator" && step.type === "observe" && (step.message || "").includes("Merged claims")) return true;
+  return false;
+}
 
-  if (agent === "orchestrator" && type === "think" && message.startsWith("Starting verification")) {
-    startTraceRow("Starting verification…");
-    return;
-  }
-  if (agent === "doc_extractor" && type === "act") {
-    startTraceRow("Extracting documents…");
-    return;
-  }
-  if (agent === "doc_extractor" && type === "observe" && message.includes("No documents")) {
-    completeActiveTraceRow("No documents uploaded");
-    return;
-  }
-  if (agent === "orchestrator" && type === "observe" && message.includes("Merged claims")) {
-    const match = message.match(/docs:\s*(\d+)/);
-    const n = match ? match[1] : "?";
-    completeActiveTraceRow(`Documents extracted (${n} file${n === "1" ? "" : "s"})`);
-    return;
-  }
-  if (agent === "research_planner" && type === "think") {
-    startTraceRow("Checking public record requirements…");
-    return;
-  }
-  if (agent === "research_planner" && type === "act") {
-    if (message.includes("Skipping") || message.includes("not required")) {
-      completeActiveTraceRow("Public search not required");
-    } else if (message.includes("Research complete")) {
-      completeActiveTraceRow("Research complete");
-    } else {
-      completeActiveTraceRow(message.length > 72 ? `${message.slice(0, 69)}…` : message);
+async function playTraceStep(step) {
+  if (!step || step.type === "ping") return;
+
+  const epoch = traceQueueEpoch;
+  markChecklistForTraceStep(step);
+  const label = (step.label || shortWords(step.message, 4)).toLowerCase();
+  const pause = (ms) => sleep(ms).then(() => epoch === traceQueueEpoch);
+
+  if (step.type === "finished" || step.type === "complete") {
+    startTraceRow((step.label || shortWords(`done ${step.kyb_status || ""}`, 4)).toLowerCase());
+    if (await pause(TRACE_PHASE_MS.complete)) {
+      completeActiveTraceRow();
+      setAgentTraceStatus("Done");
     }
     return;
   }
-  if (agent === "public_search" && type === "act" && message.includes("Searching")) {
-    startTraceRow("Searching public records…");
+
+  if (step.type === "error") {
+    startTraceRow(shortWords(step.message, 4));
+    if (await pause(TRACE_PHASE_MS.act)) {
+      if (agentTraceActiveRow) agentTraceActiveRow.classList.add("error");
+      completeActiveTraceRow();
+      setAgentTraceStatus("Error");
+    }
     return;
   }
-  if (agent === "public_search" && type === "observe") {
-    completeActiveTraceRow(message.length > 72 ? `${message.slice(0, 69)}…` : message);
-    return;
-  }
-  if (agent === "public_search" && type === "act") {
-    startTraceRow(message.length > 72 ? `${message.slice(0, 69)}…` : message);
-    return;
-  }
-  if (agent === "orchestrator" && type === "think" && message.includes("scorecard")) {
-    startTraceRow("Running scorecard…");
-    return;
-  }
-  if (type === "complete") {
-    completeActiveTraceRow("Scorecard complete");
-    const status = step.kyb_status || "";
-    const label = status
-      ? `Verification complete — ${status.replace(/_/g, " ")}`
-      : "Verification complete";
-    startTraceRow(label);
-    completeActiveTraceRow(label);
-    setAgentTraceStatus("Done");
-    return;
-  }
-  if (type === "error") {
+
+  if (!REACT_PHASES.has(step.type) || shouldSkipTraceStep(step, label)) return;
+
+  startTraceRow(label);
+  if (step.type === "think") setAgentTraceStatus("Thinking…");
+  else if (step.type === "act") setAgentTraceStatus("Acting…");
+  else setAgentTraceStatus("Observing…");
+
+  const ms = TRACE_PHASE_MS[step.type] || 420;
+  if (await pause(ms)) {
     completeActiveTraceRow();
-    startTraceRow(message || "Verification error");
-    if (agentTraceActiveRow) {
-      agentTraceActiveRow.classList.add("error");
-      completeActiveTraceRow(message || "Verification error");
-    }
-    setAgentTraceStatus("Error");
+    scrollTraceList();
   }
 }
 
-function showPublicSearchOutcome(data) {
-  const skippedEl = document.getElementById("public-search-skipped");
-  const factsEl = document.getElementById("kyb-public-facts");
-  const panel = document.getElementById("public-record-panel");
+function enqueueAgentTraceStep(step) {
+  traceStepQueue = traceStepQueue.then(() => playTraceStep(step)).catch(() => {});
+}
 
-  if (data.search_performed && data.public_facts) {
-    skippedEl?.classList.add("hidden");
-    kybPublicFacts = data.public_facts;
-    updatePublicRecordSummary(data.public_facts);
-    if (factsEl) factsEl.innerHTML = renderPublicFacts(data.public_facts);
-    panel?.setAttribute("open", "");
-  } else {
-    if (factsEl) factsEl.innerHTML = "";
-    updatePublicRecordSummary(null);
-    if (skippedEl) {
-      skippedEl.textContent =
-        "Public search not required — submitted documents and form data satisfied verification requirements.";
-      skippedEl.classList.remove("hidden");
-    }
-    panel?.setAttribute("open", "");
-  }
+function waitForAgentTraceQueue() {
+  return traceStepQueue;
 }
 
 async function submitWithAgentStream(formData, signal) {
@@ -286,6 +329,7 @@ async function submitWithAgentStream(formData, signal) {
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult = null;
+  const appliedChecklist = new Set();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -299,21 +343,35 @@ async function submitWithAgentStream(formData, signal) {
       if (!line.startsWith("data:")) continue;
       const payload = JSON.parse(line.slice(5).trim());
       if (payload.type === "ping") continue;
-      if (payload.type === "complete") {
+
+      if (payload.type === "checklist" && payload.num) {
+        const item = {
+          num: payload.num,
+          result: payload.result,
+          detail: typeof payload.detail === "string" ? payload.detail : payload.message,
+          recommendation: payload.recommendation,
+        };
+        if (!appliedChecklist.has(item.num)) {
+          appliedChecklist.add(item.num);
+          enqueueChecklistItem(item);
+        }
+        continue;
+      }
+
+      if (payload.type === "complete" && payload.session_id) {
         finalResult = payload;
+        applyScorecardFallback(payload.scorecard?.items, appliedChecklist);
+        enqueueAgentTraceStep({ type: "finished", label: payload.scorecard?.kyb_status || "done" });
       } else if (payload.type === "error") {
         throw new Error(payload.message || "Verification error");
       } else {
-        appendAgentTraceStep(payload);
-        if (payload.type !== "complete" && payload.type !== "error") {
-          setAgentTraceStatus("Working…");
-        }
+        enqueueAgentTraceStep(payload);
       }
     }
   }
 
   if (!finalResult) throw new Error("Verification ended without a result.");
-  return finalResult;
+  return { result: finalResult, appliedChecklist };
 }
 
 async function revealChecklistResults(items) {
@@ -352,138 +410,6 @@ async function loadChecklistTemplate() {
 function resetChecklistPending() {
   checklistTemplate = checklistTemplate.map((i) => ({ ...i, state: "PENDING", result: "PENDING" }));
   renderVerifyChecklist(checklistTemplate);
-}
-
-function updatePublicRecordSummary(facts, searching = false) {
-  const el = document.getElementById("public-record-summary-text");
-  if (!el) return;
-  if (searching) {
-    el.textContent = "Searching…";
-    return;
-  }
-  if (!facts) {
-    el.textContent = "";
-    return;
-  }
-  const name = facts.legal_name || "—";
-  const status = facts.status || "unknown";
-  const conf = Math.round((facts.confidence ?? 0) * 100);
-  el.textContent = `${name} · ${status} · ${conf}%`;
-}
-
-function renderPublicFacts(facts) {
-  if (!facts) return "";
-
-  const apiErr = facts.search_error
-    ? `<div class="api-error-banner">${facts.search_error}</div>`
-    : "";
-  const stateHint =
-    facts.suggested_state && !document.getElementById("kyb_state").value.trim()
-      ? `<p class="public-record-hint">State: ${facts.suggested_state}</p>`
-      : facts.state_mismatch && facts.suggested_state
-        ? `<p class="public-record-hint">Try state ${facts.suggested_state}</p>`
-        : "";
-
-  const rows = [
-    ["Name", facts.legal_name],
-    ["Status", facts.status],
-    ["Type", facts.entity_type],
-    ["State", facts.incorporation_state],
-    ["Agent", facts.registered_agent_address],
-    ["Purpose", facts.naics_or_purpose],
-  ]
-    .filter(([, v]) => v)
-    .map(([k, v]) => `<div class="public-fact-row"><span>${k}</span><span>${escapeHtml(String(v))}</span></div>`)
-    .join("");
-
-  const sources = (facts.source_urls || []).slice(0, 3);
-  const sourceLinks = sources.length
-    ? `<div class="public-record-sources">${sources.map((u) => `<a href="${u}" target="_blank" rel="noopener">Source</a>`).join(" · ")}</div>`
-    : "";
-
-  return `
-    ${apiErr}
-    ${stateHint}
-    <div class="public-facts-compact">${rows || "<span class='public-record-hint'>No details found</span>"}</div>
-    ${sourceLinks}
-  `;
-}
-
-function crossCheckLabel(key) {
-  return { address: "Operating address", purpose: "Business purpose" }[key] || key;
-}
-
-function crossCheckBadge(result) {
-  return {
-    PASS: "Confirmed",
-    FLAG: "Review",
-    BLOCK: "Blocked",
-    SKIP: "—",
-  }[result] || result;
-}
-
-function crossCheckNote(key, result, detail) {
-  const d = (detail || "").toLowerCase();
-  if (result === "SKIP") {
-    if (d.includes("operating address") || d.includes("add your operating")) return "Enter address above";
-    if (d.includes("business purpose") || d.includes("add your business")) return "Enter purpose above";
-    if (d.includes("waiting on public")) return "Waiting on public record";
-    return detail;
-  }
-  if (result === "PASS" && key === "address") {
-    if (d.includes("different street") || d.includes("both in")) return "Same state as registered agent";
-    if (d.includes("matches address")) return "Matches public filing";
-  }
-  if (result === "PASS" && key === "purpose") {
-    if (d.includes("overlap")) return "Aligns with NAICS on file";
-  }
-  if (result === "FLAG" && key === "address" && d.includes("registered agent")) {
-    const m = detail.match(/in (\w{2}); registered agent on file is in (\w{2})/i);
-    if (m) return `${m[1]} vs ${m[2]} on SOS filing`;
-  }
-  if (detail && detail.length > 72) {
-    return detail.replace(/ — typical for corporations\.?$/i, "").replace(/Different street from registered agent, both in /i, "Same state · ");
-  }
-  return detail;
-}
-
-function crossCheckSummaryLine(checks) {
-  const values = Object.values(checks || {});
-  if (!values.length) return "";
-  const confirmed = values.filter((c) => c.result === "PASS").length;
-  const review = values.filter((c) => c.result === "FLAG" || c.result === "BLOCK").length;
-  if (confirmed && !review) return `${confirmed} confirmed`;
-  if (review && !confirmed) return `${review} need review`;
-  if (confirmed && review) return `${confirmed} confirmed · ${review} review`;
-  return "Add fields above to compare";
-}
-
-function renderCrossChecks(checks) {
-  if (!checks || !Object.keys(checks).length) return "";
-
-  const summary = crossCheckSummaryLine(checks);
-  const rows = Object.entries(checks)
-    .map(([key, c]) => {
-      const label = crossCheckLabel(key);
-      const state = (c.result || "SKIP").toLowerCase();
-      const note = escapeHtml(crossCheckNote(key, c.result, c.detail));
-      return `<li class="cross-check-item ${state}">
-        <span class="cross-check-field">${escapeHtml(label)}</span>
-        <span class="cross-check-badge">${crossCheckBadge(c.result)}</span>
-        <span class="cross-check-note">${note}</span>
-      </li>`;
-    })
-    .join("");
-
-  const hasOutcome = Object.values(checks).some((c) => ["PASS", "FLAG", "BLOCK"].includes(c.result));
-
-  return `<details class="cross-check-panel"${hasOutcome ? " open" : ""}>
-    <summary class="cross-check-summary">
-      <span class="cross-check-label">Public record match</span>
-      <span class="cross-check-one-liner">${escapeHtml(summary)}</span>
-    </summary>
-    <ul class="cross-check-list">${rows}</ul>
-  </details>`;
 }
 
 function renderScorecard(data) {
@@ -540,6 +466,14 @@ function renderScorecard(data) {
       <h3 class="scorecard-title">${escapeHtml(statusWord)}</h3>
       <p class="scorecard-meta">${sc.flags_count} flag${sc.flags_count === 1 ? "" : "s"} · ${sc.blocks_count} block${sc.blocks_count === 1 ? "" : "s"}</p>
     </div>
+    ${
+      sc.kyb_status === "passed"
+        ? `<div class="admission-panel">
+            <p class="admission-panel-title">Admission to network</p>
+            <p class="admission-panel-meta">Confidence score: 10 · All verification requirements satisfied.</p>
+          </div>`
+        : ""
+    }
     ${recommendationsHtml}
     <table class="scorecard-table">
       <thead><tr><th>#</th><th>Item</th><th>Result</th><th>Detail</th></tr></thead>
@@ -574,6 +508,14 @@ function renderPersonRows() {
     .join("");
 }
 
+function updateSubmitButtonState() {
+  const btn = document.getElementById("kyb-submit-btn");
+  if (!btn) return;
+  const hasDocs = pendingDocs.length > 0;
+  btn.disabled = !hasDocs;
+  btn.title = hasDocs ? "" : "Upload at least one document to run verification";
+}
+
 function renderDocList() {
   document.getElementById("enterprise-doc-list").innerHTML = pendingDocs
     .map(
@@ -587,6 +529,7 @@ function renderDocList() {
     </li>`
     )
     .join("");
+  updateSubmitButtonState();
 }
 
 async function apiJson(path, body, method = "POST", timeoutMs = 60000) {
@@ -634,100 +577,80 @@ function setLoadingMessage(text) {
   if (el) el.textContent = text;
 }
 
-function setSearchBadge(_text, searching = false) {
-  const badge = document.getElementById("public-record-badge");
-  if (!badge) return;
-  badge.classList.add("hidden");
-  if (searching) updatePublicRecordSummary(null, true);
-}
-
-async function runCrossCheckOnly() {
-  if (!kybSessionId || !kybPublicFacts) return;
-  const { operating_address, business_purpose } = getUserInputs();
-  if (!operating_address && !business_purpose) {
-    document.getElementById("kyb-cross-check-preview").innerHTML = "";
-    return;
-  }
+async function loadDemoCompanyOptions() {
+  const select = document.getElementById("demo-company-select");
+  if (!select) return;
   try {
-    const data = await apiJson(
-      `/api/enterprise/kyb/${kybSessionId}/cross-check`,
-      { operating_address, business_purpose },
-      "POST",
-      10000
-    );
-    document.getElementById("kyb-cross-check-preview").innerHTML = renderCrossChecks(data.cross_checks);
-  } catch (_) {
-    /* cross-check preview is optional */
+    const data = await apiJson("/api/enterprise/demo-companies", null, "GET", 10000);
+    const companies = data.companies || [];
+    select.innerHTML =
+      '<option value="">Select sample package…</option>' +
+      companies
+        .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`)
+        .join("");
+  } catch {
+    select.innerHTML = '<option value="">Trial packages unavailable</option>';
   }
 }
 
-async function runDebouncedSearch() {
-  if (!kybSessionId) return;
-
-  const { legal_name, state, operating_address, business_purpose } = getUserInputs();
-  if (legal_name.length < 3) {
-    setSearchBadge("");
-    updatePublicRecordSummary(null);
-    document.getElementById("kyb-public-facts").innerHTML = "";
-    document.getElementById("kyb-cross-check-preview").innerHTML = "";
-    document.getElementById("public-record-panel").open = false;
+async function applyDemoCompany(companyId) {
+  const hintEl = document.getElementById("demo-company-hint");
+  if (!companyId) {
+    if (hintEl) hintEl.classList.add("hidden");
     return;
   }
 
-  const reqId = ++searchRequestId;
-  const loading = document.getElementById("kyb-search-loading");
-  loading.classList.remove("hidden");
-  updatePublicRecordSummary(null, true);
-  setSearchBadge("…", true);
-
   try {
-    const data = await apiJson(`/api/enterprise/kyb/${kybSessionId}/search`, {
-      legal_name,
-      state,
-      operating_address,
-      business_purpose,
-    }, "POST", SEARCH_TIMEOUT_MS);
-    if (reqId !== searchRequestId) return;
+    const profile = await apiJson(`/api/enterprise/demo-companies/${companyId}`, null, "GET", 10000);
+    const pdfRes = await fetch(`${API_BASE}/api/enterprise/demo-companies/${companyId}/document.pdf`);
+    if (!pdfRes.ok) throw new Error("Could not load trial PDF");
+    const blob = await pdfRes.blob();
+    const filename =
+      profile.document_filename ||
+      pdfRes.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ||
+      "trial_document.pdf";
 
-    kybPublicFacts = data.public_facts;
-    if (data.public_facts?.suggested_state && !document.getElementById("kyb_state").value.trim()) {
-      document.getElementById("kyb_state").value = data.public_facts.suggested_state;
+    pendingDocs.length = 0;
+    owners.length = 0;
+    controlPersons.length = 0;
+
+    document.getElementById("kyb_legal_name").value = profile.legal_name || "";
+    document.getElementById("kyb_state").value = profile.state || "";
+    document.getElementById("kyb_ein").value = profile.ein || "";
+    document.getElementById("kyb_address").value = profile.operating_address || "";
+    document.getElementById("kyb_purpose").value = profile.business_purpose || "";
+
+    (profile.beneficial_owners || []).forEach((o) => owners.push({ ...o }));
+    (profile.control_persons || []).forEach((p) => controlPersons.push({ ...p }));
+    if (owners.length === 0) {
+      owners.push({ name: "", ownership_pct: 25 });
     }
-    updatePublicRecordSummary(data.public_facts);
-    document.getElementById("kyb-public-facts").innerHTML = renderPublicFacts(data.public_facts);
-    document.getElementById("kyb-cross-check-preview").innerHTML = renderCrossChecks(data.cross_checks);
-    setSearchBadge("");
+    if (controlPersons.length === 0) {
+      controlPersons.push({ name: "", title: "CEO" });
+    }
+
+    pendingDocs.push({
+      label: profile.document_label || defaultDocLabel(filename),
+      file: new File([blob], filename, { type: "application/pdf" }),
+    });
+
+    renderOwnerRows();
+    renderPersonRows();
+    renderDocList();
+    document.getElementById("enterprise-doc-file").value = "";
+
+    if (hintEl) {
+      hintEl.textContent = profile.hint || "";
+      hintEl.classList.remove("hidden");
+    }
   } catch (err) {
-    if (reqId !== searchRequestId) return;
-    if (err.status === 404) {
-      try {
-        await ensureSession();
-        return runDebouncedSearch();
-      } catch (_) {
-        /* show error below */
-      }
-    }
-    document.getElementById("kyb-public-facts").innerHTML = `<div class="api-error-banner">${err.message}</div>`;
-    setSearchBadge("Error");
-  } finally {
-    if (reqId === searchRequestId) loading.classList.add("hidden");
+    alert(`Could not load trial company: ${err.message}`);
+    document.getElementById("demo-company-select").value = "";
   }
-}
-
-function scheduleSearch() {
-  clearTimeout(searchDebounceTimer);
-  searchDebounceTimer = setTimeout(runDebouncedSearch, 1500);
-}
-
-function scheduleCrossCheck() {
-  clearTimeout(crossCheckDebounceTimer);
-  crossCheckDebounceTimer = setTimeout(runCrossCheckOnly, 600);
 }
 
 async function initKybSession() {
   kybSessionId = null;
-  kybPublicFacts = null;
-  searchRequestId = 0;
   owners.length = 0;
   controlPersons.length = 0;
   pendingDocs.length = 0;
@@ -737,18 +660,17 @@ async function initKybSession() {
   document.getElementById("kyb_ein").value = "";
   document.getElementById("kyb_address").value = "";
   document.getElementById("kyb_purpose").value = "";
-  document.getElementById("kyb-public-facts").innerHTML = "";
-  updatePublicRecordSummary(null);
   clearAgentTrace();
   setAgentTraceStatus("Ready");
   document.getElementById("agent-trace-loading")?.classList.add("hidden");
-  document.getElementById("public-record-panel")?.removeAttribute("open");
   document.getElementById("agent-trace-panel")?.setAttribute("open", "");
-  document.getElementById("kyb-cross-check-preview").innerHTML = "";
   renderOwnerRows();
   renderPersonRows();
   renderDocList();
   document.getElementById("enterprise-doc-file").value = "";
+  document.getElementById("demo-company-select").value = "";
+  document.getElementById("demo-company-hint")?.classList.add("hidden");
+  await loadDemoCompanyOptions();
 
   setWizardStep(1);
   setVerifySidebarStatus("Ready");
@@ -760,6 +682,8 @@ async function initKybSession() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  updateSubmitButtonState();
+
   document.getElementById("go-enterprise").addEventListener("click", async () => {
     showSection("enterprise");
     try {
@@ -837,10 +761,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  document.getElementById("demo-company-select").addEventListener("change", (e) => {
+    applyDemoCompany(e.target.value);
+  });
+
   document.getElementById("kyb-submit-btn").addEventListener("click", async () => {
     const submitBtn = document.getElementById("kyb-submit-btn");
     const loading = document.getElementById("kyb-submit-loading");
     const inputs = getUserInputs();
+
+    if (pendingDocs.length === 0) {
+      alert("Upload at least one document (formation, SOS filing, or similar) before running verification.");
+      return;
+    }
 
     submitBtn.disabled = true;
     loading.classList.remove("hidden");
@@ -870,9 +803,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
-      let data;
+      let streamOutcome;
       try {
-        data = await submitWithAgentStream(fd, controller.signal);
+        streamOutcome = await submitWithAgentStream(fd, controller.signal);
       } catch (err) {
         if (err.name === "AbortError") {
           throw new Error("Verification timed out. Try with fewer documents or check the backend terminal.");
@@ -882,23 +815,25 @@ document.addEventListener("DOMContentLoaded", () => {
         clearTimeout(timer);
       }
 
-      setAgentTraceStatus("Done");
-      showPublicSearchOutcome(data);
+      const data = streamOutcome.result;
+      applyScorecardFallback(data.scorecard?.items, streamOutcome.appliedChecklist);
 
-      await revealChecklistResults(data.scorecard.items);
       const status = data.scorecard.kyb_status;
       setVerifySidebarStatus(status === "passed" ? "All confirmed" : status === "blocked" ? "Blocked" : "Review needed");
 
+      setLoadingMessage("Preparing results…");
+      await waitForAgentTraceQueue();
       document.getElementById("kyb-scorecard").innerHTML = renderScorecard(data);
-      await sleep(400);
-      setWizardStep(2);
+      await sleep(500);
+      await transitionWizardStep(2);
     } catch (err) {
-      appendAgentTraceStep({ type: "error", agent: "orchestrator", message: err.message });
+      enqueueAgentTraceStep({ type: "error", agent: "orchestrator", message: err.message });
+      await waitForAgentTraceQueue();
       setAgentTraceStatus("Error");
       alert(`Verification failed: ${err.message}`);
       setVerifySidebarStatus("Error");
     } finally {
-      submitBtn.disabled = false;
+      updateSubmitButtonState();
       loading.classList.add("hidden");
       setLoadingMessage("Extracting documents and running cross-check…");
     }

@@ -27,7 +27,12 @@ def is_db_enabled() -> bool:
 def _normalize_url(url: str) -> str:
     # Railway/Heroku sometimes provide postgres:// — SQLAlchemy 2 prefers postgresql://
     if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql://", 1)
+        url = url.replace("postgres://", "postgresql://", 1)
+    # Mac: localhost resolves to ::1 and can hit system Postgres instead of Docker on 127.0.0.1
+    if "@localhost:" in url:
+        url = url.replace("@localhost:", "@127.0.0.1:", 1)
+    if "@localhost/" in url:
+        url = url.replace("@localhost/", "@127.0.0.1/", 1)
     return url
 
 
@@ -50,20 +55,34 @@ def get_engine() -> Engine | None:
 
 def init_db() -> bool:
     """Create tables if DATABASE_URL is configured. Returns True if ready."""
-    engine = get_engine()
-    if engine is None:
+    global _engine, _SessionLocal
+    try:
+        engine = get_engine()
+        if engine is None:
+            return False
+        Base.metadata.create_all(bind=engine)
+        return ping_db()
+    except Exception as exc:
+        print(
+            f"WARNING: Postgres init failed ({exc}) — "
+            "verification will run but records will not persist. "
+            "Fix DATABASE_URL or run: cd backend && docker compose up -d"
+        )
+        _engine = None
+        _SessionLocal = None
         return False
-    Base.metadata.create_all(bind=engine)
-    return ping_db()
 
 
 def ping_db() -> bool:
     engine = get_engine()
     if engine is None:
         return False
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-    return True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
 
 
 @contextmanager

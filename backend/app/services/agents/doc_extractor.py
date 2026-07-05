@@ -8,6 +8,7 @@ from io import BytesIO
 from app.services import api_cache
 from app.services.agents import llm_client
 from app.services.agents.trace import AgentTrace
+from app.services.agents.trace_labels import short_words
 from app.services.llm_usage import UsageSession
 
 
@@ -103,15 +104,25 @@ async def extract_uploads(
             "observe",
             "doc_extractor",
             "No documents uploaded.",
+            label="no files uploaded",
             document_count=0,
         )
         return []
 
+    n = len(uploads)
+    await trace.emit(
+        "think",
+        "doc_extractor",
+        f"Review {n} uploaded file(s) for KYB fields.",
+        label=short_words(f"scan {n} uploads", 4),
+        document_count=n,
+    )
     await trace.emit(
         "act",
         "doc_extractor",
-        f"Extracting structured fields from {len(uploads)} document(s)…",
-        document_count=len(uploads),
+        f"Extracting structured fields from {n} document(s)…",
+        label="llm extract fields",
+        document_count=n,
     )
 
     results: list[dict] = []
@@ -128,18 +139,26 @@ async def extract_uploads(
         )
 
     gathered = await asyncio.gather(*(t[3] for t in extract_tasks))
+    entities: list[str] = []
     for (label, filename, text_len, _), extraction in zip(extract_tasks, gathered):
         extraction["filename"] = filename
         extraction["text_length"] = text_len
         results.append(extraction)
-        entity = (extraction.get("extracted") or {}).get("entity_name") or "—"
-        await trace.emit(
-            "observe",
-            "doc_extractor",
-            f"Parsed «{label}» — entity hint: {entity}",
-            label=label,
-            text_length=text_len,
-            from_cache=bool(extraction.get("from_cache")),
-        )
+        entity = (extraction.get("extracted") or {}).get("entity_name")
+        if entity and entity != "—":
+            entities.append(str(entity))
+
+    observe_label = short_words(entities[0], 4) if entities else short_words(f"{n} files parsed", 4)
+    if entities and n > 1:
+        observe_label = short_words(f"{entities[0]} +{n - 1} more", 4)
+
+    await trace.emit(
+        "observe",
+        "doc_extractor",
+        f"Parsed {n} document(s) — entity: {entities[0] if entities else 'unknown'}",
+        label=observe_label,
+        document_count=n,
+        entities=entities[:3],
+    )
 
     return results
