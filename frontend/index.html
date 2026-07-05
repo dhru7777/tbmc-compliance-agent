@@ -123,14 +123,25 @@
         </div>
 
         <aside class="kyb-sidebar">
+          <details class="agent-trace-panel" id="agent-trace-panel" open>
+            <summary class="agent-trace-summary">
+              <span class="agent-trace-label">Agent activity</span>
+              <span id="agent-trace-status" class="agent-trace-status">Ready</span>
+            </summary>
+            <div id="agent-trace-loading" class="agent-trace-loading hidden">
+              <span class="agent-spinner" aria-hidden="true"></span>
+              <span>Verifying…</span>
+            </div>
+            <ol class="agent-trace-list" id="agent-trace-list"></ol>
+          </details>
+
           <details class="public-record-panel" id="public-record-panel">
             <summary class="public-record-summary">
               <span class="public-record-label">Public record</span>
               <span id="public-record-summary-text" class="public-record-one-liner"></span>
-              <span id="public-record-badge" class="tab-badge hidden"></span>
             </summary>
-            <div id="kyb-search-loading" class="public-record-loading hidden">Searching…</div>
             <div id="kyb-public-facts" class="public-record-body"></div>
+            <p id="public-search-skipped" class="public-search-skipped hidden"></p>
           </details>
 
           <details class="verify-panel" id="verify-panel">
@@ -207,6 +218,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=14"></script>
+  <script src="js/app.js?v=17"></script>
 </body>
 </html>

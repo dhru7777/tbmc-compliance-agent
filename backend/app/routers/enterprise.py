@@ -1,6 +1,8 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services import kyb_service
@@ -33,7 +35,7 @@ class KybCrossCheckRequest(BaseModel):
 
 @router.post("/kyb/session")
 async def kyb_create_session():
-    """Create empty session — user details first, search runs as they type."""
+    """Create empty session — verification runs on submit via agent orchestrator."""
     return await kyb_service.create_session()
 
 
@@ -128,6 +130,87 @@ async def kyb_verify(
         raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
 
 
+async def _parse_kyb_submit_form(
+    beneficial_owners: str,
+    control_persons: str,
+    documents: list[UploadFile],
+    document_labels: list[str],
+) -> tuple[list, list, list]:
+    owners = json.loads(beneficial_owners) if beneficial_owners else []
+    persons = json.loads(control_persons) if control_persons else []
+    uploads = []
+    for i, doc in enumerate(documents):
+        label = document_labels[i] if i < len(document_labels) else doc.filename or f"document_{i}"
+        content = await doc.read()
+        uploads.append((label, doc.filename or "upload", content))
+    return owners, persons, uploads
+
+
+@router.post("/kyb/{session_id}/submit/stream")
+async def kyb_submit_stream(
+    session_id: str,
+    legal_name: str = Form(default=""),
+    state: str = Form(default=""),
+    ein: str = Form(default=""),
+    operating_address: str = Form(default=""),
+    business_purpose: str = Form(default=""),
+    beneficial_owners: str = Form(default="[]"),
+    control_persons: str = Form(default="[]"),
+    documents: list[UploadFile] = File(default=[]),
+    document_labels: list[str] = Form(default=[]),
+):
+    """SSE stream of agent think/act/observe steps, then final scorecard JSON."""
+    try:
+        owners, persons, uploads = await _parse_kyb_submit_form(
+            beneficial_owners, control_persons, documents, document_labels
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_step(step: dict) -> None:
+        await queue.put(step)
+
+    async def run_submit() -> dict:
+        try:
+            return await kyb_service.submit_kyb(
+                session_id,
+                ein,
+                operating_address,
+                business_purpose,
+                owners,
+                persons,
+                uploads,
+                legal_name,
+                state,
+                on_step=on_step,
+            )
+        finally:
+            await queue.put(None)
+
+    async def event_generator():
+        task = asyncio.create_task(run_submit())
+        while True:
+            step = await queue.get()
+            if step is None:
+                break
+            yield f"data: {json.dumps(step)}\n\n"
+        try:
+            result = await task
+            yield f"data: {json.dumps({'type': 'complete', **result})}\n\n"
+        except KeyError:
+            yield f'data: {json.dumps({"type": "error", "message": "Session not found"})}\n\n'
+        except Exception as exc:
+            yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/kyb/{session_id}/submit")
 async def kyb_submit(
     session_id: str,
@@ -141,15 +224,11 @@ async def kyb_submit(
     documents: list[UploadFile] = File(default=[]),
     document_labels: list[str] = Form(default=[]),
 ):
-    """Extract doc claims via LLM, cross-reference with deterministic rules."""
+    """Agentic verify — doc extract, planner ReAct loop, deterministic scorecard."""
     try:
-        owners = json.loads(beneficial_owners) if beneficial_owners else []
-        persons = json.loads(control_persons) if control_persons else []
-        uploads = []
-        for i, doc in enumerate(documents):
-            label = document_labels[i] if i < len(document_labels) else doc.filename or f"document_{i}"
-            content = await doc.read()
-            uploads.append((label, doc.filename or "upload", content))
+        owners, persons, uploads = await _parse_kyb_submit_form(
+            beneficial_owners, control_persons, documents, document_labels
+        )
         return await kyb_service.submit_kyb(
             session_id, ein, operating_address, business_purpose, owners, persons, uploads,
             legal_name, state,
@@ -169,6 +248,26 @@ def kyb_credential(session_id: str):
         return {"session_id": session_id, "credential": cred}
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/kyb/verifications")
+def kyb_list_verifications(limit: int = 50):
+    """List recent persisted KYB verification records (requires DATABASE_URL)."""
+    from app.services.verification_store import list_verifications
+
+    rows = list_verifications(limit=min(limit, 200))
+    return {"count": len(rows), "verifications": rows}
+
+
+@router.get("/kyb/verifications/{enterprise_id}")
+def kyb_get_verification(enterprise_id: str):
+    """Fetch a persisted verification by enterprise_id (UUID)."""
+    from app.services.verification_store import get_verification_by_id
+
+    record = get_verification_by_id(enterprise_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Verification record not found")
+    return record
 
 
 @router.get("/kyb/{session_id}/record")

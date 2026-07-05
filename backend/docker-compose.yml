@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tbmc-kyb-postgres
+    environment:
+      POSTGRES_USER: tbmc
+      POSTGRES_PASSWORD: tbmc
+      POSTGRES_DB: tbmc_kyb
+    ports:
+      - "5432:5432"
+    volumes:
+      - tbmc_kyb_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tbmc_kyb_pgdata:

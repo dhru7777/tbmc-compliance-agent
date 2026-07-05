@@ -4,15 +4,33 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.db.database import init_db, is_db_enabled, ping_db
 from app.routers import enterprise, issuer
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if is_db_enabled():
+        ok = init_db()
+        if ok:
+            print("PostgreSQL connected — kyb_verifications table ready")
+        else:
+            print("WARNING: DATABASE_URL set but Postgres init failed")
+    else:
+        print("DATABASE_URL not set — verifications will not persist to Postgres")
+    yield
+
 
 app = FastAPI(
     title="TBMC Compliance Onboarding Demo",
     description="Client KYB + Issuer compliance verification for clearinghouse admission",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 _default_origins = [
@@ -37,4 +55,13 @@ app.include_router(issuer.router, prefix="/api/issuer", tags=["issuer"])
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    db_ok = False
+    if is_db_enabled():
+        try:
+            db_ok = ping_db()
+        except Exception:
+            db_ok = False
+    return {
+        "status": "ok",
+        "database": "connected" if db_ok else ("disabled" if not is_db_enabled() else "error"),
+    }

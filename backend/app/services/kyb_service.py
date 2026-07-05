@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.services import credential_store, kyb_rules, llm_search, md_recorder, session_store, verify_service, x401_service
+from app.services.verification_store import save_verification_record
 
 _sessions: dict[str, dict] = {}
 
@@ -250,15 +251,20 @@ def _log_verify_session(session_id: str, verify_result: dict) -> None:
     sc = det.get("scorecard", {})
     md_recorder.append_step(
         session_id,
-        "VERIFY — AI + Deterministic",
+        "VERIFY — Agentic pipeline",
         [
-            f"- Public search: {ai.get('public_presence', {}).get('search_method', 'n/a')}",
+            f"- Public search performed: {verify_result.get('search_performed', False)}",
             f"- Documents parsed: {ai.get('documents', {}).get('count', 0)}",
             f"- KYB status: {sc.get('kyb_status', 'unknown')}",
             f"- Flags: {sc.get('flags_count', 0)}, Blocks: {sc.get('blocks_count', 0)}",
-            "- Raw document bytes discarded after parse (not stored)",
         ],
     )
+    for step in verify_result.get("agent_trace", []):
+        md_recorder.append_step(
+            session_id,
+            f"Agent [{step.get('type')}] {step.get('agent')}",
+            [f"- {step.get('message', '')}"],
+        )
     for ext in ai.get("documents", {}).get("extractions", []):
         cache_note = " (cached)" if ext.get("from_cache") else ""
         md_recorder.append_step(
@@ -278,6 +284,7 @@ async def submit_kyb(
     uploads: list[tuple[str, str, bytes]],
     legal_name: str = "",
     state: str = "",
+    on_step=None,
 ) -> dict:
     session = _get_session(session_id)
     if legal_name:
@@ -293,27 +300,43 @@ async def submit_kyb(
             "control_persons": control_persons,
         }
     )
+    session["public_facts"] = None
 
-    verify_result = await verify_service.run_verify(session, uploads, refresh_public=False)
+    verify_result = await verify_service.run_verify(session, uploads, on_step=on_step)
     _log_verify_session(session_id, verify_result)
 
     scorecard = verify_result["deterministic"]["scorecard"]
     session["updated_at"] = _now()
     _persist(session)
 
+    search_note = (
+        "Public search performed"
+        if verify_result.get("search_performed")
+        else "Public search skipped — documents satisfied requirements"
+    )
     md_recorder.append_step(
         session_id,
         "Submit complete — x401 deferred",
         [
             f"- KYB status: {scorecard.get('kyb_status', 'unknown')}",
+            f"- {search_note}",
             f"- Flags: {scorecard.get('flags_count', 0)}, Blocks: {scorecard.get('blocks_count', 0)}",
             "- x401 credential issuance not yet simulated",
-            "- Raw document bytes discarded after parse (not stored)",
         ],
+    )
+
+    verification_record = save_verification_record(
+        session_id=session_id,
+        session=session,
+        scorecard=scorecard,
+        uploads=uploads,
+        verify_result=verify_result,
     )
 
     return {
         "session_id": session_id,
+        "enterprise_id": verification_record.get("enterprise_id") if verification_record else None,
+        "verification_record": verification_record,
         "pipeline": {
             "upload": {"document_count": len(uploads), "stored_raw_documents": False},
             "verify": {"stage": "verify", "kyb_status": scorecard.get("kyb_status")},
@@ -321,6 +344,9 @@ async def submit_kyb(
         },
         "scorecard": scorecard,
         "public_facts": session.get("public_facts"),
+        "search_performed": verify_result.get("search_performed", False),
+        "agent_trace": verify_result.get("agent_trace", []),
+        "cost_analysis": verify_result.get("cost_analysis", {}),
         "middesk": session.get("middesk"),
         "record_url": f"/api/enterprise/kyb/{session_id}/record",
     }
