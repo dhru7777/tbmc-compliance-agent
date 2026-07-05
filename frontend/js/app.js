@@ -582,6 +582,11 @@ async function apiJson(path, body, method = "POST", timeoutMs = 60000) {
     if (err.name === "AbortError") {
       throw new Error("Request timed out — the server may still be processing. Try again in a moment.");
     }
+    if (err instanceof TypeError || /load failed|failed to fetch|networkerror/i.test(String(err.message))) {
+      throw new Error(
+        `Cannot reach API at ${API_BASE}. On mobile, use the deployed site (not localhost). Check Netlify API_BASE points to Railway HTTPS.`
+      );
+    }
     throw err;
   } finally {
     clearTimeout(timer);

@@ -5,3 +5,4 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  API_BASE = "https://tbmc-compliance-api-production.up.railway.app"
