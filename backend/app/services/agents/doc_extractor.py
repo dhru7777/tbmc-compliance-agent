@@ -6,6 +6,7 @@ import asyncio
 from io import BytesIO
 
 from app.services import api_cache
+from app.services.demo_companies import is_trial_document_text
 from app.services.agents import llm_client
 from app.services.agents.trace import AgentTrace
 from app.services.agents.trace_labels import short_words
@@ -34,14 +35,16 @@ def _extract_one_sync(
 ) -> dict:
     text_hash = api_cache.content_hash(text_content[:8000])
     label_key = label.strip().lower()
-    cached = api_cache.get("doc_extract", label_key, text_hash)
-    if cached is not None:
-        if usage_session:
-            usage_session.add_cache(
-                f"Document extraction ({label})",
-                agent="doc_extractor",
-            )
-        return api_cache.mark_cached(cached)
+    trial_doc = is_trial_document_text(text_content)
+    if not trial_doc:
+        cached = api_cache.get("doc_extract", label_key, text_hash)
+        if cached is not None:
+            if usage_session:
+                usage_session.add_cache(
+                    f"Document extraction ({label})",
+                    agent="doc_extractor",
+                )
+            return api_cache.mark_cached(cached)
 
     api_key = llm_client.doc_api_key()
     if not api_key or not text_content.strip():
@@ -52,7 +55,8 @@ def _extract_one_sync(
                 note="no text or API key",
             )
         result = {"label": label, "extracted": {}, "note": "No text extracted or API key missing"}
-        api_cache.set("doc_extract", result, label_key, text_hash)
+        if not trial_doc:
+            api_cache.set("doc_extract", result, label_key, text_hash)
         return result
 
     prompt = f"""Extract structured KYB claims from this document labeled "{label}".
@@ -79,7 +83,8 @@ Document text:
             usage_session=usage_session,
         )
         result = {"label": label, "extracted": extracted}
-        api_cache.set("doc_extract", result, label_key, text_hash)
+        if not trial_doc:
+            api_cache.set("doc_extract", result, label_key, text_hash)
         return result
     except Exception as exc:
         return {"label": label, "extracted": {}, "note": str(exc)}

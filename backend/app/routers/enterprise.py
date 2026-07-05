@@ -56,13 +56,18 @@ def get_demo_company_profile(company_id: str):
 @router.get("/demo-companies/{company_id}/document.pdf")
 def get_demo_company_pdf(company_id: str):
     try:
-        pdf_bytes, filename = demo_companies.build_demo_pdf(company_id)
+        pdf_bytes, filename, instance_id = demo_companies.build_demo_pdf(company_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Demo company not found")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Demo-Document-Id": instance_id,
+        },
     )
 
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import random
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-# Fresh nonce per process start so repeat demos avoid doc_extract cache collisions.
-_RUN_NONCE = uuid.uuid4().hex[:12]
+TRIAL_DOC_MARKER = "KYB TRIAL DOCUMENT — NOT FOR PRODUCTION USE"
 
 DEMO_COMPANIES: list[dict[str, Any]] = [
     {
@@ -112,19 +113,31 @@ def get_demo_company(company_id: str) -> dict[str, Any]:
     raise KeyError(company_id)
 
 
-def _pdf_text_lines(company: dict[str, Any]) -> list[str]:
+def is_trial_document_text(text: str) -> bool:
+    return TRIAL_DOC_MARKER in (text or "")
+
+
+def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
     cid = company["id"]
-    nonce = f"{_RUN_NONCE}-{uuid.uuid4().hex[:8]}"
+    instance_id = uuid.uuid4().hex
+    issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rng = random.Random(instance_id)
+    file_number = rng.randint(1_000_000, 9_999_999)
+    formation_year = rng.randint(2018, 2024)
+    formation_month = rng.randint(1, 12)
+    formation_day = rng.randint(1, 28)
     lines = [
-        "KYB TRIAL DOCUMENT — NOT FOR PRODUCTION USE",
-        f"Reference: DEMO-{cid.upper()}-{nonce}",
+        TRIAL_DOC_MARKER,
+        f"Reference: DEMO-{cid.upper()}-{instance_id[:16]}",
+        f"Issued: {issued_at}",
+        f"Package: {'complete' if company['complete'] else 'incomplete'}",
         "",
         "SECRETARY OF STATE — BUSINESS ENTITY FILING",
         f"Entity Name: {company['legal_name']}",
         f"State of Formation: {company['state']}",
         f"Entity Type: {'Corporation' if 'Inc' in company['legal_name'] or 'Corporation' in company['legal_name'] else 'Limited Liability Company'}",
-        f"Formation Date: January 12, 2021",
-        f"File Number: {abs(hash(nonce)) % 9000000 + 1000000}",
+        f"Formation Date: {formation_month:02d}/{formation_day:02d}/{formation_year}",
+        f"File Number: {file_number}",
         "",
         f"Principal Office: {company['operating_address']}",
         f"Business Purpose: {company['business_purpose']}",
@@ -185,18 +198,14 @@ def _pdf_text_lines(company: dict[str, Any]) -> list[str]:
             ]
         )
 
-    lines.extend(["", f"Document fingerprint: {nonce}"])
-    return lines
+    lines.extend(["", f"Document instance: {instance_id}"])
+    return lines, instance_id
 
 
-def _escape_pdf_text(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def build_demo_pdf(company_id: str) -> tuple[bytes, str]:
-    """Return (pdf_bytes, filename)."""
+def build_demo_pdf(company_id: str) -> tuple[bytes, str, str]:
+    """Return (pdf_bytes, filename, instance_id). Fresh content on every call."""
     company = get_demo_company(company_id)
-    lines = _pdf_text_lines(company)
+    lines, instance_id = _pdf_text_lines(company)
     ops: list[str] = ["BT", "/F1 10 Tf", "48 780 Td"]
     for i, line in enumerate(lines[:58]):
         esc = _escape_pdf_text(line[:96])
@@ -239,8 +248,12 @@ def build_demo_pdf(company_id: str) -> tuple[bytes, str]:
         f"startxref\n{xref_pos}\n%%EOF\n"
     )
     pdf = header + body + "".join(xref).encode() + trailer.encode()
-    filename = f"{company['file_stem']}.pdf"
-    return pdf, filename
+    filename = f"{company['file_stem']}_{instance_id[:8]}.pdf"
+    return pdf, filename, instance_id
+
+
+def _escape_pdf_text(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def demo_profile(company_id: str) -> dict[str, Any]:
@@ -258,5 +271,5 @@ def demo_profile(company_id: str) -> dict[str, Any]:
         "beneficial_owners": c["beneficial_owners"],
         "control_persons": c["control_persons"],
         "document_label": c["document_label"],
-        "document_filename": f"{c['file_stem']}.pdf",
+        "document_filename_prefix": c["file_stem"],
     }

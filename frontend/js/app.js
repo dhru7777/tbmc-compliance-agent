@@ -622,6 +622,31 @@ async function loadDemoCompanyOptions() {
   }
 }
 
+async function fetchTrialPdf(companyId) {
+  const pdfRes = await fetch(
+    `${API_BASE}/api/enterprise/demo-companies/${encodeURIComponent(companyId)}/document.pdf?t=${Date.now()}`,
+    { cache: "no-store" }
+  );
+  if (!pdfRes.ok) throw new Error("Could not load trial PDF");
+  const blob = await pdfRes.blob();
+  const filename =
+    pdfRes.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] || "trial_document.pdf";
+  return { blob, filename };
+}
+
+async function refreshTrialPdfIfSelected() {
+  const companyId = document.getElementById("demo-company-select")?.value;
+  if (!companyId) return;
+  const profile = await apiJson(`/api/enterprise/demo-companies/${companyId}`, null, "GET", 10000);
+  const { blob, filename } = await fetchTrialPdf(companyId);
+  pendingDocs.length = 0;
+  pendingDocs.push({
+    label: profile.document_label || defaultDocLabel(filename),
+    file: new File([blob], filename, { type: "application/pdf" }),
+  });
+  renderDocList();
+}
+
 async function applyDemoCompany(companyId) {
   const hintEl = document.getElementById("demo-company-hint");
   if (!companyId) {
@@ -631,13 +656,7 @@ async function applyDemoCompany(companyId) {
 
   try {
     const profile = await apiJson(`/api/enterprise/demo-companies/${companyId}`, null, "GET", 10000);
-    const pdfRes = await fetch(`${API_BASE}/api/enterprise/demo-companies/${companyId}/document.pdf`);
-    if (!pdfRes.ok) throw new Error("Could not load trial PDF");
-    const blob = await pdfRes.blob();
-    const filename =
-      profile.document_filename ||
-      pdfRes.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ||
-      "trial_document.pdf";
+    const { blob, filename } = await fetchTrialPdf(companyId);
 
     pendingDocs.length = 0;
     owners.length = 0;
@@ -822,6 +841,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       await ensureSession();
+      await refreshTrialPdfIfSelected();
 
       const fd = new FormData();
       fd.append("legal_name", inputs.legal_name);
