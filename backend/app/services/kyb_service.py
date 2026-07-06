@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from app.services import credential_store, kyb_rules, llm_search, md_recorder, session_store, verify_service, x401_service
+from app.services import credential_store, demo_companies, kyb_rules, llm_search, md_recorder, session_store, verify_service, x401_service
 from app.services.verification_store import save_verification_record
 
 _sessions: dict[str, dict] = {}
@@ -288,6 +288,7 @@ async def submit_kyb(
     state: str = "",
     monthly_volume_low_usd: float | None = None,
     monthly_volume_high_usd: float | None = None,
+    trial_company_id: str | None = None,
     on_step=None,
 ) -> dict:
     session = _get_session(session_id)
@@ -308,6 +309,7 @@ async def submit_kyb(
         session["user_claims"]["monthly_volume_low_usd"] = monthly_volume_low_usd
     if monthly_volume_high_usd is not None:
         session["user_claims"]["monthly_volume_high_usd"] = monthly_volume_high_usd
+    session["trial_company_id"] = demo_companies.resolve_trial_company_id(trial_company_id)
     session["public_facts"] = None
 
     verify_result = await verify_service.run_verify(session, uploads, on_step=on_step)

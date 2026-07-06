@@ -237,6 +237,7 @@ async def kyb_submit_stream(
     monthly_volume_high_usd: str = Form(default=""),
     beneficial_owners: str = Form(default="[]"),
     control_persons: str = Form(default="[]"),
+    trial_company_id: str = Form(default=""),
     documents: list[UploadFile] = File(default=[]),
     document_labels: list[str] = Form(default=[]),
 ):
@@ -270,6 +271,7 @@ async def kyb_submit_stream(
                 state,
                 monthly_volume_low_usd=vol_low,
                 monthly_volume_high_usd=vol_high,
+                trial_company_id=trial_company_id or None,
                 on_step=on_step,
             )
         finally:
@@ -317,6 +319,7 @@ async def kyb_submit(
     monthly_volume_high_usd: str = Form(default=""),
     beneficial_owners: str = Form(default="[]"),
     control_persons: str = Form(default="[]"),
+    trial_company_id: str = Form(default=""),
     documents: list[UploadFile] = File(default=[]),
     document_labels: list[str] = Form(default=[]),
 ):
@@ -332,6 +335,7 @@ async def kyb_submit(
             legal_name, state,
             monthly_volume_low_usd=vol_low,
             monthly_volume_high_usd=vol_high,
+            trial_company_id=trial_company_id or None,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")

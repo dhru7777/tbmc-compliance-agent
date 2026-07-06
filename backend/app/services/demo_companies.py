@@ -123,6 +123,18 @@ def get_demo_company(company_id: str) -> dict[str, Any]:
     raise KeyError(company_id)
 
 
+def resolve_trial_company_id(company_id: str | None) -> str | None:
+    """Validate trial company id from UI form (dropdown), if present."""
+    if not company_id or not str(company_id).strip():
+        return None
+    cid = str(company_id).strip().lower()
+    try:
+        get_demo_company(cid)
+        return cid
+    except KeyError:
+        return None
+
+
 def is_trial_document_text(text: str) -> bool:
     t = text or ""
     if TRIAL_DOC_MARKER in t:
@@ -161,6 +173,27 @@ def trial_public_facts(company_id: str) -> dict[str, Any]:
         "trial_company_id": company_id,
         "trial_complete": complete,
     }
+
+
+def trial_document_fields_from_company(company_id: str) -> dict[str, Any]:
+    """Structured extraction from demo profile when PDF text is unreadable."""
+    company = get_demo_company(company_id)
+    complete = bool(company.get("complete"))
+    fields: dict[str, Any] = {
+        "document_type": "government_id" if complete else "sos_filing",
+        "entity_name": company["legal_name"],
+        "ein": company.get("ein") or None,
+        "person_name": company["control_persons"][0]["name"] if company.get("control_persons") else None,
+        "address": company["operating_address"],
+        "formation_date": None,
+        "key_facts": [
+            f"Business purpose: {company['business_purpose']}",
+            "Status: Active - in good standing" if complete else "Status: Formation recorded",
+        ],
+    }
+    if complete:
+        fields["key_facts"].append("GOVERNMENT ID - Managing Member")
+    return fields
 
 
 def parse_trial_document_fields(text: str) -> dict[str, Any]:

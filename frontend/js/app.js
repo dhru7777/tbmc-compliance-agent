@@ -1024,6 +1024,10 @@ document.addEventListener("DOMContentLoaded", () => {
       fd.append("business_purpose", inputs.business_purpose);
       fd.append("monthly_volume_low_usd", inputs.monthly_volume_low_usd);
       fd.append("monthly_volume_high_usd", inputs.monthly_volume_high_usd);
+      const trialCompanyId = document.getElementById("demo-company-select")?.value;
+      if (trialCompanyId) {
+        fd.append("trial_company_id", trialCompanyId);
+      }
       fd.append("beneficial_owners", JSON.stringify(owners.filter((o) => o.name)));
       fd.append("control_persons", JSON.stringify(controlPersons.filter((p) => p.name)));
       pendingDocs.forEach((d) => {

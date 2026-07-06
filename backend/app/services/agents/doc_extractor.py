@@ -9,6 +9,7 @@ from app.services import api_cache
 from app.services.demo_companies import (
     is_trial_document_text,
     parse_trial_document_fields,
+    trial_document_fields_from_company,
 )
 from app.services.agents import llm_client
 from app.services.agents.trace import AgentTrace
@@ -35,9 +36,29 @@ def _extract_one_sync(
     label: str,
     text_content: str,
     usage_session: UsageSession | None = None,
+    trial_company_id: str | None = None,
 ) -> dict:
     text_hash = api_cache.content_hash(text_content[:8000])
     label_key = label.strip().lower()
+    if trial_company_id:
+        if usage_session:
+            usage_session.add_skip(
+                f"Document extraction ({label})",
+                agent="doc_extractor",
+                note="trial package — deterministic parse",
+            )
+        extracted = (
+            parse_trial_document_fields(text_content)
+            if is_trial_document_text(text_content)
+            else trial_document_fields_from_company(trial_company_id)
+        )
+        return {
+            "label": label,
+            "extracted": extracted,
+            "note": "Trial document — deterministic extraction (no LLM cache)",
+            "trial_document": True,
+        }
+
     trial_doc = is_trial_document_text(text_content)
     if trial_doc:
         if usage_session:
@@ -109,14 +130,18 @@ async def extract_document(
     label: str,
     text_content: str,
     usage_session: UsageSession | None = None,
+    trial_company_id: str | None = None,
 ) -> dict:
-    return await asyncio.to_thread(_extract_one_sync, label, text_content, usage_session)
+    return await asyncio.to_thread(
+        _extract_one_sync, label, text_content, usage_session, trial_company_id
+    )
 
 
 async def extract_uploads(
     uploads: list[tuple[str, str, bytes]],
     trace: AgentTrace,
     usage_session: UsageSession | None = None,
+    trial_company_id: str | None = None,
 ) -> list[dict]:
     """Parse each upload: text extract → LLM structured claims."""
     if not uploads:
@@ -145,7 +170,7 @@ async def extract_uploads(
 
         text = extract_text_from_upload(filename, content)
         extraction = await extract_document(
-            label, text or f"[unreadable: {filename}]", usage_session
+            label, text or f"[unreadable: {filename}]", usage_session, trial_company_id
         )
         extraction["filename"] = filename
         extraction["text_length"] = len(text)
