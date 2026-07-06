@@ -67,10 +67,20 @@ def health():
             db_ok = ping_db()
         except Exception:
             db_ok = False
+    deploy_file = ""
+    try:
+        from pathlib import Path
+
+        deploy_file = Path(__file__).resolve().parents[1] / "DEPLOY_SHA.txt"
+        deploy_marker = deploy_file.read_text(encoding="utf-8").strip() if deploy_file.is_file() else ""
+    except Exception:
+        deploy_marker = ""
+
     return {
         "status": "ok",
+        "api_version": app.version,
         "database": "connected" if db_ok else ("disabled" if not is_db_enabled() else "error"),
-        "git_commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GIT_COMMIT", ""))[:12],
+        "git_commit": (os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GIT_COMMIT", "")) or deploy_marker)[:12],
         "features": {
             "trial_company_submit": True,
             "demo_volume_fields": True,
