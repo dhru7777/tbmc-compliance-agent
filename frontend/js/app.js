@@ -446,9 +446,6 @@ function resetChecklistPending() {
   renderVerifyChecklist(checklistTemplate);
 }
 
-  renderVerifyChecklist(checklistTemplate);
-}
-
 function resetCertificatePanel() {
   networkAdmissionGranted = false;
   lastSubmitResult = null;
