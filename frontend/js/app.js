@@ -349,6 +349,26 @@ function enqueueAgentTraceStep(step) {
   traceStepQueue = traceStepQueue.then(() => playTraceStep(step)).catch(() => {});
 }
 
+function traceStepKey(step) {
+  if (!step) return "";
+  return `${step.ts || 0}|${step.agent || ""}|${step.type || ""}|${step.label || step.message || ""}`;
+}
+
+function enqueueStreamTraceStep(step, streamedKeys) {
+  if (!step || step.type === "ping") return;
+  const key = traceStepKey(step);
+  if (streamedKeys.has(key)) return;
+  streamedKeys.add(key);
+  enqueueAgentTraceStep(step);
+}
+
+function replayAgentTraceFromResult(agentTrace, streamedKeys) {
+  for (const step of agentTrace || []) {
+    if (!REACT_PHASES.has(step.type)) continue;
+    enqueueStreamTraceStep(step, streamedKeys);
+  }
+}
+
 function waitForAgentTraceQueue() {
   return traceStepQueue;
 }
@@ -369,6 +389,7 @@ async function submitWithAgentStream(formData, signal) {
   let buffer = "";
   let finalResult = null;
   const appliedChecklist = new Set();
+  const streamedTraceKeys = new Set();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -385,14 +406,14 @@ async function submitWithAgentStream(formData, signal) {
 
       if (payload.type === "complete" && payload.session_id) {
         finalResult = payload;
-        applyScorecardFallback(payload.scorecard?.items, appliedChecklist);
+        replayAgentTraceFromResult(payload.agent_trace, streamedTraceKeys);
       } else if (payload.type === "error") {
         throw new Error(payload.message || "Verification error");
       } else if (REACT_PHASES.has(payload.type)) {
         if (payload.type === "observe" && payload.checklist_num && payload.checklist_result) {
           appliedChecklist.add(payload.checklist_num);
         }
-        enqueueAgentTraceStep(payload);
+        enqueueStreamTraceStep(payload, streamedTraceKeys);
       }
     }
   }
@@ -1025,13 +1046,17 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = streamOutcome.result;
+      setLoadingMessage("Agent finishing up…");
+      await waitForAgentTraceQueue();
+
+      setLoadingMessage("Preparing results…");
+      await revealChecklistResults(data.scorecard?.items);
       applyScorecardFallback(data.scorecard?.items, streamOutcome.appliedChecklist);
 
       const status = data.scorecard.kyb_status;
       setVerifySidebarStatus(status === "passed" ? "All confirmed" : status === "blocked" ? "Blocked" : "Review needed");
+      setAgentTraceStatus("Done");
 
-      setLoadingMessage("Preparing results…");
-      await waitForAgentTraceQueue();
       syncChecklistFromScorecard(data.scorecard?.items);
       document.getElementById("kyb-scorecard").innerHTML = renderScorecard(data);
       bindScorecardActions(data);

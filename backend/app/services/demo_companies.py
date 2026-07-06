@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-TRIAL_DOC_MARKER = "KYB TRIAL DOCUMENT — NOT FOR PRODUCTION USE"
+TRIAL_DOC_MARKER = "KYB TRIAL DOCUMENT - NOT FOR PRODUCTION USE"
 
 DEMO_COMPANIES: list[dict[str, Any]] = [
     {
@@ -124,7 +124,83 @@ def get_demo_company(company_id: str) -> dict[str, Any]:
 
 
 def is_trial_document_text(text: str) -> bool:
-    return TRIAL_DOC_MARKER in (text or "")
+    t = text or ""
+    if TRIAL_DOC_MARKER in t:
+        return True
+    # Minimal PDF text extractors often replace em dashes with "?"
+    if "KYB TRIAL DOCUMENT" in t and "NOT FOR PRODUCTION USE" in t:
+        return True
+    return match_trial_company_id(t) is not None
+
+
+def match_trial_company_id(text: str) -> str | None:
+    """Parse DEMO-{company-id}- reference embedded in trial PDF text."""
+    upper = (text or "").upper()
+    for company in DEMO_COMPANIES:
+        marker = f"DEMO-{company['id'].upper()}-"
+        if marker in upper:
+            return company["id"]
+    return None
+
+
+def trial_public_facts(company_id: str) -> dict[str, Any]:
+    """Registry-shaped public facts for deterministic trial scorecard checks."""
+    company = get_demo_company(company_id)
+    complete = bool(company.get("complete"))
+    return {
+        "legal_name": company["legal_name"],
+        "registered_agent_address": company["operating_address"],
+        "naics_or_purpose": company["business_purpose"],
+        "incorporation_state": company["state"],
+        "status": "active - in good standing" if complete else "formation recorded",
+        "formation_verified": True,
+        "formation_detail": "Trial package formation document on file",
+        "confidence": 0.95 if complete else 0.6,
+        "search_method": "trial_package_fixture",
+        "source_urls": [],
+        "trial_company_id": company_id,
+        "trial_complete": complete,
+    }
+
+
+def parse_trial_document_fields(text: str) -> dict[str, Any]:
+    """Deterministic structured extraction from trial PDF plain text."""
+    company_id = match_trial_company_id(text)
+    company = get_demo_company(company_id) if company_id else None
+    fields: dict[str, Any] = {
+        "document_type": "sos_filing",
+        "entity_name": company["legal_name"] if company else None,
+        "ein": company.get("ein") if company else None,
+        "person_name": None,
+        "address": company["operating_address"] if company else None,
+        "formation_date": None,
+        "key_facts": [],
+    }
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("Entity Name:"):
+            fields["entity_name"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Federal EIN:"):
+            ein = line.split(":", 1)[1].strip()
+            if "NOT PROVIDED" not in ein.upper():
+                fields["ein"] = ein
+        elif line.startswith("Principal Office:"):
+            fields["address"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Business Purpose:"):
+            purpose = line.split(":", 1)[1].strip()
+            fields["key_facts"].append(f"Business purpose: {purpose}")
+        elif line.startswith("Status:"):
+            fields["key_facts"].append(line)
+        elif line.startswith("Control Person:"):
+            fields["person_name"] = line.split(":", 1)[1].split(",")[0].strip()
+        elif "GOVERNMENT ID" in line:
+            fields["document_type"] = "government_id"
+            fields["key_facts"].append(line)
+        elif "good standing" in line.lower() or line.lower().startswith("status:"):
+            fields["key_facts"].append(line)
+    if company and company.get("control_persons"):
+        fields["person_name"] = fields["person_name"] or company["control_persons"][0]["name"]
+    return fields
 
 
 def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
@@ -142,7 +218,7 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
         f"Issued: {issued_at}",
         f"Package: {'complete' if company['complete'] else 'incomplete'}",
         "",
-        "SECRETARY OF STATE — BUSINESS ENTITY FILING",
+        "SECRETARY OF STATE - BUSINESS ENTITY FILING",
         f"Entity Name: {company['legal_name']}",
         f"State of Formation: {company['state']}",
         f"Entity Type: {'Corporation' if 'Inc' in company['legal_name'] or 'Corporation' in company['legal_name'] else 'Limited Liability Company'}",
@@ -158,7 +234,7 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
             [
                 "",
                 f"Federal EIN: {company['ein']}",
-                "Status: Active — in good standing",
+                "Status: Active - in good standing",
                 "Annual report filed and current.",
                 "",
                 "Beneficial Ownership Certification:",
@@ -172,7 +248,7 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
         lines.extend(
             [
                 "",
-                "GOVERNMENT ID — Managing Member",
+                "GOVERNMENT ID - Managing Member",
                 f"Name: {company['control_persons'][0]['name']}",
                 "Document: Driver License (DE)",
                 "ID verification: client-submitted copy on file",
@@ -182,8 +258,8 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
         lines.extend(
             [
                 "",
-                "Federal EIN: NOT PROVIDED — pending IRS assignment",
-                "Status: Active — in good standing",
+                "Federal EIN: NOT PROVIDED - pending IRS assignment",
+                "Status: Active - in good standing",
                 "",
                 "NOTE: Beneficial ownership schedule not attached.",
                 "NOTE: Government ID not included in this package.",
@@ -195,13 +271,13 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
             [
                 "",
                 f"Federal EIN: {company['ein']}",
-                "Status: Formation recorded — standing certificate NOT attached",
+                "Status: Formation recorded - standing certificate NOT attached",
                 "",
-                f"Beneficial Owner: {company['beneficial_owners'][0]['name']} — 100% ownership",
+                f"Beneficial Owner: {company['beneficial_owners'][0]['name']} - 100% ownership",
                 f"Control Person: {cp['name']}, {cp['title']}",
                 "NOTE: Secretary of State compliance certificate missing from submission.",
                 "",
-                "GOVERNMENT ID — Managing Member",
+                "GOVERNMENT ID - Managing Member",
                 f"Name: {cp['name']}",
                 "Document: Driver License (NV)",
                 "ID verification: client-submitted copy on file",

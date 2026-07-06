@@ -289,6 +289,7 @@ async def kyb_submit_stream(
             if step is None:
                 break
             yield f"data: {json.dumps(step)}\n\n"
+            await asyncio.sleep(0.04)
         try:
             result = await task
             yield f"data: {json.dumps({'type': 'complete', **result})}\n\n"

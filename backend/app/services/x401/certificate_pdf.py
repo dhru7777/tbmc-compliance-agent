@@ -200,7 +200,7 @@ def render_certificate_pdf(credential: dict) -> bytes:
     c.text(MARGIN, scope_y, "Approved scope", size=12, font="F2")
     scope_y -= 22
     scope_y = row(
-        "MONTHLY VOLUME (DECLARED)",
+        "EXPECTED MONTHLY VOLUME (USD)",
         f"{_fmt_usd(float(volume.get('low', 0)))} to {_fmt_usd(float(volume.get('high', 0)))}",
         col1_x,
         scope_y,

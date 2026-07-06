@@ -7,6 +7,7 @@ from typing import Any
 
 from app.services import kyb_rules
 from app.services.agents import doc_extractor, gaps, public_search, research_planner
+from app.services.demo_companies import is_trial_document_text, match_trial_company_id, trial_public_facts
 from app.services.agents.trace import AgentTrace, StepCallback
 from app.services.agents.trace_labels import observe_label_for_action, short_words
 from app.services.document_cross_check import cross_check_documents
@@ -40,6 +41,23 @@ async def run_kyb_pipeline(
     # --- Document extraction (per-file think / act / observe) ---
     doc_extractions = await doc_extractor.extract_uploads(uploads, trace, usage)
     gaps.enrich_claims_from_documents(user, doc_extractions)
+
+    # Trial packages: inject registry facts from embedded DEMO-{id} marker (unique PDF per fetch).
+    for label, filename, content in uploads:
+        text = doc_extractor.extract_text_from_upload(filename, content)
+        if is_trial_document_text(text):
+            trial_id = match_trial_company_id(text)
+            if trial_id:
+                public_facts = trial_public_facts(trial_id)
+                session["public_facts"] = public_facts
+                await trace.emit(
+                    "observe",
+                    "orchestrator",
+                    f"Trial package «{trial_id}» — loaded registry fixture for scorecard cross-check.",
+                    label="trial registry fixture",
+                    trial_company_id=trial_id,
+                )
+                break
 
     documents = [{"label": d.get("label"), "filename": d.get("filename")} for d in doc_extractions]
     session["documents"] = documents
@@ -166,8 +184,10 @@ async def run_kyb_pipeline(
                 break
             continue
 
-    if not search_performed and not public_facts:
-        session["public_facts"] = None
+    if not search_performed:
+        public_facts = session.get("public_facts")
+        if not public_facts or not public_facts.get("trial_company_id"):
+            session["public_facts"] = None
 
     # --- Deterministic scorecard ---
     await trace.emit(
