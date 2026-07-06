@@ -45,6 +45,8 @@ async def create_session() -> dict:
             "operating_address": "",
             "business_purpose": "",
             "ein": "",
+            "monthly_volume_low_usd": None,
+            "monthly_volume_high_usd": None,
             "beneficial_owners": [],
             "control_persons": [],
         },
@@ -284,6 +286,8 @@ async def submit_kyb(
     uploads: list[tuple[str, str, bytes]],
     legal_name: str = "",
     state: str = "",
+    monthly_volume_low_usd: float | None = None,
+    monthly_volume_high_usd: float | None = None,
     on_step=None,
 ) -> dict:
     session = _get_session(session_id)
@@ -300,6 +304,10 @@ async def submit_kyb(
             "control_persons": control_persons,
         }
     )
+    if monthly_volume_low_usd is not None:
+        session["user_claims"]["monthly_volume_low_usd"] = monthly_volume_low_usd
+    if monthly_volume_high_usd is not None:
+        session["user_claims"]["monthly_volume_high_usd"] = monthly_volume_high_usd
     session["public_facts"] = None
 
     verify_result = await verify_service.run_verify(session, uploads, on_step=on_step)
@@ -314,16 +322,6 @@ async def submit_kyb(
         if verify_result.get("search_performed")
         else "Public search skipped — documents satisfied requirements"
     )
-    md_recorder.append_step(
-        session_id,
-        "Submit complete — x401 deferred",
-        [
-            f"- KYB status: {scorecard.get('kyb_status', 'unknown')}",
-            f"- {search_note}",
-            f"- Flags: {scorecard.get('flags_count', 0)}, Blocks: {scorecard.get('blocks_count', 0)}",
-            "- x401 credential issuance not yet simulated",
-        ],
-    )
 
     verification_record = save_verification_record(
         session_id=session_id,
@@ -333,6 +331,55 @@ async def submit_kyb(
         verify_result=verify_result,
     )
 
+    credential = None
+    x401_status = "skipped"
+    x401_message = "No credential — KYB did not pass"
+    if scorecard.get("kyb_status") == "passed":
+        enterprise_id = verification_record.get("enterprise_id") if verification_record else None
+        credential = x401_service.issue_compliance_credential(
+            session_id=session_id,
+            session=session,
+            scorecard=scorecard,
+            enterprise_id=enterprise_id,
+        )
+        if credential:
+            pdf_bytes = x401_service.render_certificate_pdf(credential)
+            credential_store.save_credential(session_id, credential, pdf_bytes)
+            x401_status = "issued"
+            x401_message = "Signed x401 compliance credential issued"
+            md_recorder.append_step(
+                session_id,
+                "Stage 3 — x401 credential issued",
+                [
+                    f"- Credential ID: {credential.get('credential_id')}",
+                    f"- Credit limit: ${credential.get('allowed_scope', {}).get('credit_limit_usd', 0):,.2f}",
+                    f"- Expires: {credential.get('expiry_date')}",
+                    f"- Signing key: {credential.get('signing_key_id')}",
+                ],
+            )
+    else:
+        md_recorder.append_step(
+            session_id,
+            "Submit complete — no credential",
+            [
+                f"- KYB status: {scorecard.get('kyb_status', 'unknown')}",
+                f"- {search_note}",
+                f"- Flags: {scorecard.get('flags_count', 0)}, Blocks: {scorecard.get('blocks_count', 0)}",
+                "- x401 credential not issued (passed required)",
+            ],
+        )
+
+    if x401_status == "issued":
+        md_recorder.append_step(
+            session_id,
+            "Submit complete",
+            [
+                f"- KYB status: {scorecard.get('kyb_status', 'unknown')}",
+                f"- {search_note}",
+                f"- Confidence: {scorecard.get('confidence_score', '—')}",
+            ],
+        )
+
     return {
         "session_id": session_id,
         "enterprise_id": verification_record.get("enterprise_id") if verification_record else None,
@@ -340,9 +387,16 @@ async def submit_kyb(
         "pipeline": {
             "upload": {"document_count": len(uploads), "stored_raw_documents": False},
             "verify": {"stage": "verify", "kyb_status": scorecard.get("kyb_status")},
-            "x401": {"status": "deferred", "message": "x401 credential simulation not yet enabled"},
+            "x401": {
+                "status": x401_status,
+                "message": x401_message,
+                "credential_id": credential.get("credential_id") if credential else None,
+            },
         },
         "scorecard": scorecard,
+        "credential": credential,
+        "credential_url": f"/api/enterprise/kyb/{session_id}/credential" if credential else None,
+        "certificate_pdf_url": f"/api/enterprise/kyb/{session_id}/credential.pdf" if credential else None,
         "public_facts": session.get("public_facts"),
         "search_performed": verify_result.get("search_performed", False),
         "agent_trace": verify_result.get("agent_trace", []),
@@ -364,6 +418,19 @@ def get_session_summary(session_id: str) -> dict:
 def get_credential(session_id: str) -> dict | None:
     _get_session(session_id)
     return credential_store.load_credential(session_id)
+
+
+def get_certificate_pdf(session_id: str) -> bytes | None:
+    _get_session(session_id)
+    pdf = credential_store.load_certificate_pdf(session_id)
+    if pdf:
+        return pdf
+    cred = credential_store.load_credential(session_id)
+    if not cred:
+        return None
+    pdf = x401_service.render_certificate_pdf(cred)
+    credential_store.save_credential(session_id, cred, pdf)
+    return pdf
 
 
 def get_record(session_id: str) -> str:

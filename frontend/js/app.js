@@ -9,6 +9,9 @@ let checklistRunState = {};
 const owners = [];
 const controlPersons = [];
 const pendingDocs = [];
+/** Last submit payload — used when user clicks Add to network / Generate certificate. */
+let lastSubmitResult = null;
+let networkAdmissionGranted = false;
 
 function showSection(id) {
   document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
@@ -90,6 +93,8 @@ function getUserInputs() {
     ein: document.getElementById("kyb_ein").value.trim(),
     operating_address: document.getElementById("kyb_address").value.trim(),
     business_purpose: document.getElementById("kyb_purpose").value.trim(),
+    monthly_volume_low_usd: document.getElementById("kyb_volume_low").value.trim(),
+    monthly_volume_high_usd: document.getElementById("kyb_volume_high").value.trim(),
   };
 }
 
@@ -441,8 +446,101 @@ function resetChecklistPending() {
   renderVerifyChecklist(checklistTemplate);
 }
 
+  renderVerifyChecklist(checklistTemplate);
+}
+
+function resetCertificatePanel() {
+  networkAdmissionGranted = false;
+  lastSubmitResult = null;
+  const column = document.getElementById("certificate-column");
+  const inner = document.getElementById("certificate-column-inner");
+  if (!inner) return;
+  column?.classList.remove("is-active", "is-loading");
+  inner.innerHTML = `
+    <div class="certificate-placeholder" id="certificate-placeholder">
+      <p class="certificate-placeholder-title">Compliance certificate</p>
+      <p class="certificate-placeholder-text">When verification passes, click <strong>Add to network</strong> to generate and preview your signed certificate here.</p>
+    </div>`;
+}
+
+function getCertificatePdfUrl(data) {
+  if (!data && !kybSessionId) return null;
+  const path =
+    data?.certificate_pdf_url ||
+    (kybSessionId ? `/api/enterprise/kyb/${kybSessionId}/credential.pdf` : null);
+  return path ? `${API_BASE}${path}` : null;
+}
+
+function showCertificatePanel(data) {
+  const inner = document.getElementById("certificate-column-inner");
+  const column = document.getElementById("certificate-column");
+  if (!inner || !column) return;
+
+  const pdfUrl = getCertificatePdfUrl(data || lastSubmitResult);
+  if (!pdfUrl) {
+    inner.innerHTML = `<p class="certificate-placeholder-text certificate-error">Certificate not available. Complete verification with a passing score first.</p>`;
+    return;
+  }
+
+  column.classList.add("is-active", "is-loading");
+  const cacheBust = `t=${Date.now()}`;
+  const src = pdfUrl.includes("?") ? `${pdfUrl}&${cacheBust}` : `${pdfUrl}?${cacheBust}`;
+
+  inner.innerHTML = `
+    <div class="certificate-column-header">
+      <h3 class="certificate-column-title">Compliance certificate</h3>
+      <p class="certificate-column-meta">Signed by the TBMC clearinghouse compliance agent</p>
+    </div>
+    <iframe class="certificate-frame" id="certificate-frame" src="${escapeHtml(src)}" title="Compliance certificate"></iframe>
+    <div class="certificate-column-actions">
+      <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-compliance-certificate.pdf" target="_blank" rel="noopener">Download PDF</a>
+      <a class="btn btn-secondary certificate-open" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open in new tab</a>
+    </div>`;
+
+  const frame = document.getElementById("certificate-frame");
+  if (frame) {
+    frame.addEventListener("load", () => column.classList.remove("is-loading"), { once: true });
+  }
+}
+
+function bindScorecardActions(data) {
+  const addBtn = document.getElementById("kyb-add-to-network");
+  const genBtn = document.getElementById("kyb-generate-cert");
+
+  const grantAdmission = () => {
+    if (networkAdmissionGranted) {
+      showCertificatePanel(data);
+      return;
+    }
+    networkAdmissionGranted = true;
+    if (addBtn) {
+      addBtn.disabled = true;
+      addBtn.textContent = "Added to network";
+      addBtn.classList.remove("btn-primary");
+      addBtn.classList.add("btn-secondary");
+    }
+    if (genBtn) {
+      genBtn.disabled = true;
+      genBtn.textContent = "Certificate generated";
+    }
+    showCertificatePanel(data);
+    columnScrollIntoView();
+  };
+
+  addBtn?.addEventListener("click", grantAdmission);
+  genBtn?.addEventListener("click", grantAdmission);
+}
+
+function columnScrollIntoView() {
+  if (window.matchMedia("(max-width: 900px)").matches) {
+    document.getElementById("certificate-column")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 function renderScorecard(data) {
+  lastSubmitResult = data;
   const sc = data.scorecard;
+  const cred = data.credential;
   const flagged = (sc.items || []).filter((i) => i.result === "FLAG");
 
   const resultLabel = (result) => {
@@ -490,6 +588,11 @@ function renderScorecard(data) {
       </details>`
     : "";
 
+  const confidence = sc.confidence_score != null ? sc.confidence_score : cred?.confidence_score;
+  const creditLimit = cred?.allowed_scope?.credit_limit_usd;
+  const confidenceLabel =
+    confidence != null ? `${Math.round(Number(confidence) * 100)}%` : "—";
+
   return `
     <div class="scorecard-header">
       <h3 class="scorecard-title">${escapeHtml(statusWord)}</h3>
@@ -499,7 +602,16 @@ function renderScorecard(data) {
       sc.kyb_status === "passed"
         ? `<div class="admission-panel">
             <p class="admission-panel-title">Admission to network</p>
-            <p class="admission-panel-meta">Confidence score: 10 · All verification requirements satisfied.</p>
+            <p class="admission-panel-meta">Confidence score: ${escapeHtml(confidenceLabel)}${
+              creditLimit != null
+                ? ` · Approved credit limit: $${Number(creditLimit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`
+                : ""
+            }</p>
+            <div class="admission-actions">
+              <button type="button" class="btn btn-primary" id="kyb-add-to-network">Add to network</button>
+              <button type="button" class="btn btn-secondary" id="kyb-generate-cert">Generate certificate</button>
+            </div>
+            <p class="admission-panel-hint">Adds your business to the clearinghouse network and displays the signed compliance certificate on the right.</p>
           </div>`
         : ""
     }
@@ -690,6 +802,8 @@ async function applyDemoCompany(companyId) {
     document.getElementById("kyb_ein").value = profile.ein || "";
     document.getElementById("kyb_address").value = profile.operating_address || "";
     document.getElementById("kyb_purpose").value = profile.business_purpose || "";
+    document.getElementById("kyb_volume_low").value = profile.monthly_volume_low_usd ?? "";
+    document.getElementById("kyb_volume_high").value = profile.monthly_volume_high_usd ?? "";
 
     (profile.beneficial_owners || []).forEach((o) => owners.push({ ...o }));
     (profile.control_persons || []).forEach((p) => controlPersons.push({ ...p }));
@@ -722,6 +836,7 @@ async function applyDemoCompany(companyId) {
 
 async function initKybSession() {
   kybSessionId = null;
+  resetCertificatePanel();
   owners.length = 0;
   controlPersons.length = 0;
   pendingDocs.length = 0;
@@ -731,6 +846,8 @@ async function initKybSession() {
   document.getElementById("kyb_ein").value = "";
   document.getElementById("kyb_address").value = "";
   document.getElementById("kyb_purpose").value = "";
+  document.getElementById("kyb_volume_low").value = "";
+  document.getElementById("kyb_volume_high").value = "";
   clearAgentTrace();
   setAgentTraceStatus("Ready");
   document.getElementById("agent-trace-loading")?.classList.add("hidden");
@@ -854,6 +971,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     submitBtn.disabled = true;
     loading.classList.remove("hidden");
+    resetCertificatePanel();
     setLoadingMessage("Running agent verification…");
     resetChecklistPending();
     setVerifySidebarStatus("Verifying…");
@@ -872,6 +990,8 @@ document.addEventListener("DOMContentLoaded", () => {
       fd.append("ein", inputs.ein);
       fd.append("operating_address", inputs.operating_address);
       fd.append("business_purpose", inputs.business_purpose);
+      fd.append("monthly_volume_low_usd", inputs.monthly_volume_low_usd);
+      fd.append("monthly_volume_high_usd", inputs.monthly_volume_high_usd);
       fd.append("beneficial_owners", JSON.stringify(owners.filter((o) => o.name)));
       fd.append("control_persons", JSON.stringify(controlPersons.filter((p) => p.name)));
       pendingDocs.forEach((d) => {
@@ -903,6 +1023,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await waitForAgentTraceQueue();
       syncChecklistFromScorecard(data.scorecard?.items);
       document.getElementById("kyb-scorecard").innerHTML = renderScorecard(data);
+      bindScorecardActions(data);
       await sleep(500);
       await transitionWizardStep(2);
     } catch (err) {

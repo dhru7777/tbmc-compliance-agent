@@ -159,6 +159,8 @@ async def kyb_verify(
     ein: str = Form(default=""),
     operating_address: str = Form(default=""),
     business_purpose: str = Form(default=""),
+    monthly_volume_low_usd: str = Form(default=""),
+    monthly_volume_high_usd: str = Form(default=""),
     beneficial_owners: str = Form(default="[]"),
     control_persons: str = Form(default="[]"),
     documents: list[UploadFile] = File(default=[]),
@@ -207,6 +209,22 @@ def _require_documents(uploads: list) -> None:
         )
 
 
+def _parse_volume(low: str, high: str) -> tuple[float | None, float | None]:
+    """Parse monthly volume range from form strings."""
+    try:
+        low_val = float(low) if low.strip() else None
+        high_val = float(high) if high.strip() else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid monthly volume — use numbers only") from exc
+    if low_val is not None and low_val < 0:
+        raise HTTPException(status_code=400, detail="Monthly volume low must be >= 0")
+    if high_val is not None and high_val < 0:
+        raise HTTPException(status_code=400, detail="Monthly volume high must be >= 0")
+    if low_val is not None and high_val is not None and high_val < low_val:
+        raise HTTPException(status_code=400, detail="Monthly volume high must be >= low")
+    return low_val, high_val
+
+
 @router.post("/kyb/{session_id}/submit/stream")
 async def kyb_submit_stream(
     session_id: str,
@@ -215,6 +233,8 @@ async def kyb_submit_stream(
     ein: str = Form(default=""),
     operating_address: str = Form(default=""),
     business_purpose: str = Form(default=""),
+    monthly_volume_low_usd: str = Form(default=""),
+    monthly_volume_high_usd: str = Form(default=""),
     beneficial_owners: str = Form(default="[]"),
     control_persons: str = Form(default="[]"),
     documents: list[UploadFile] = File(default=[]),
@@ -229,6 +249,7 @@ async def kyb_submit_stream(
         raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
 
     _require_documents(uploads)
+    vol_low, vol_high = _parse_volume(monthly_volume_low_usd, monthly_volume_high_usd)
 
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -247,6 +268,8 @@ async def kyb_submit_stream(
                 uploads,
                 legal_name,
                 state,
+                monthly_volume_low_usd=vol_low,
+                monthly_volume_high_usd=vol_high,
                 on_step=on_step,
             )
         finally:
@@ -289,6 +312,8 @@ async def kyb_submit(
     ein: str = Form(default=""),
     operating_address: str = Form(default=""),
     business_purpose: str = Form(default=""),
+    monthly_volume_low_usd: str = Form(default=""),
+    monthly_volume_high_usd: str = Form(default=""),
     beneficial_owners: str = Form(default="[]"),
     control_persons: str = Form(default="[]"),
     documents: list[UploadFile] = File(default=[]),
@@ -300,9 +325,12 @@ async def kyb_submit(
             beneficial_owners, control_persons, documents, document_labels
         )
         _require_documents(uploads)
+        vol_low, vol_high = _parse_volume(monthly_volume_low_usd, monthly_volume_high_usd)
         return await kyb_service.submit_kyb(
             session_id, ein, operating_address, business_purpose, owners, persons, uploads,
             legal_name, state,
+            monthly_volume_low_usd=vol_low,
+            monthly_volume_high_usd=vol_high,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -316,7 +344,31 @@ def kyb_credential(session_id: str):
         cred = kyb_service.get_credential(session_id)
         if not cred:
             raise HTTPException(status_code=404, detail="Credential not issued yet")
-        return {"session_id": session_id, "credential": cred}
+        from app.services.x401_service import verify_credential
+
+        return {
+            "session_id": session_id,
+            "credential": cred,
+            "signature_valid": verify_credential(cred),
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/kyb/{session_id}/credential.pdf")
+def kyb_credential_pdf(session_id: str):
+    try:
+        pdf = kyb_service.get_certificate_pdf(session_id)
+        if not pdf:
+            raise HTTPException(status_code=404, detail="Certificate not issued yet")
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="tbmc-compliance-certificate-{session_id[:8]}.pdf"',
+                "Cache-Control": "no-store",
+            },
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 

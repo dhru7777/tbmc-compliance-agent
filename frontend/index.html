@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=34" />
+  <link rel="stylesheet" href="css/styles.css?v=37" />
 </head>
 <body class="landing-active">
 
@@ -91,6 +91,16 @@
               <label for="kyb_purpose">Business purpose</label>
               <input type="text" id="kyb_purpose" placeholder="Stablecoin clearinghouse" />
             </div>
+            <div class="form-row two-col">
+              <div class="form-group">
+                <label for="kyb_volume_low">Expected monthly volume (USD) — low</label>
+                <input type="number" id="kyb_volume_low" placeholder="80000" min="0" step="1000" />
+              </div>
+              <div class="form-group">
+                <label for="kyb_volume_high">Expected monthly volume (USD) — high</label>
+                <input type="number" id="kyb_volume_high" placeholder="220000" min="0" step="1000" />
+              </div>
+            </div>
           </section>
 
           <section class="kyb-section documents-section">
@@ -156,7 +166,19 @@
 
     <!-- Scorecard -->
     <div class="wizard-panel" id="kyb-step-2">
-      <div id="kyb-scorecard"></div>
+      <div class="scorecard-layout">
+        <div class="scorecard-column">
+          <div id="kyb-scorecard"></div>
+        </div>
+        <aside class="certificate-column" id="certificate-column" aria-label="Compliance certificate">
+          <div class="certificate-column-inner" id="certificate-column-inner">
+            <div class="certificate-placeholder" id="certificate-placeholder">
+              <p class="certificate-placeholder-title">Compliance certificate</p>
+              <p class="certificate-placeholder-text">When verification passes, click <strong>Add to network</strong> to generate and preview your signed certificate here.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
       <div class="wizard-nav">
         <button type="button" class="btn btn-secondary" id="kyb-step2-back">← Back to application</button>
         <button type="button" class="btn btn-secondary" id="kyb-download-md">View audit record (MD)</button>
@@ -217,6 +239,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=34"></script>
+  <script src="js/app.js?v=37"></script>
 </body>
 </html>

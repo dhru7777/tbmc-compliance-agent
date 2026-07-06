@@ -1,5 +1,6 @@
 """Deterministic KYB cross-check rules. Middesk can be added later as corroboration."""
 
+import os
 import re
 from difflib import SequenceMatcher
 
@@ -7,6 +8,8 @@ OFAC_DENY_NAMES = [
     "specially designated national",
     "sdn list example corp",
 ]
+
+KYB_CONFIDENCE_FLOOR = float(os.getenv("KYB_CONFIDENCE_FLOOR", "0.7"))
 
 EIN_PATTERN = re.compile(r"^\d{2}-\d{7}$")
 
@@ -480,6 +483,19 @@ def build_scorecard(session: dict) -> dict:
     else:
         kyb_status = "passed"
 
+    confidence_score = _compute_confidence_score(session, items, kyb_status)
+    if kyb_status == "passed" and confidence_score < KYB_CONFIDENCE_FLOOR:
+        kyb_status = "flagged"
+        flags = list(flags) + [
+            {
+                "num": 0,
+                "item": "Confidence floor",
+                "result": "FLAG",
+                "detail": f"Confidence {confidence_score:.2f} below minimum {KYB_CONFIDENCE_FLOOR:.2f}",
+                "recommendation": "Improve public record match or supply missing attestations, then resubmit.",
+            }
+        ]
+
     vc = {
         "entity": user.get("legal_name") or public.get("legal_name"),
         "ein": user.get("ein") or None,
@@ -490,4 +506,21 @@ def build_scorecard(session: dict) -> dict:
         "signature": "<mock-signature>",
     }
 
-    return {"kyb_status": kyb_status, "items": items, "flags_count": len(flags), "blocks_count": len(blocks), "vc": vc}
+    return {
+        "kyb_status": kyb_status,
+        "items": items,
+        "flags_count": len(flags),
+        "blocks_count": len(blocks),
+        "confidence_score": confidence_score,
+        "vc": vc,
+    }
+
+
+def _compute_confidence_score(session: dict, items: list[dict], kyb_status: str) -> float:
+    public = session.get("public_facts") or {}
+    base = public.get("confidence")
+    if base is None:
+        base = 1.0 if kyb_status == "passed" else 0.5
+    base = float(base)
+    skips = sum(1 for i in items if i.get("result") == "SKIP")
+    return round(min(1.0, max(0.0, base - skips * 0.03)), 2)

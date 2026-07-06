@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db.database import init_db, is_db_enabled, ping_db
-from app.routers import enterprise, issuer
+from app.routers import enterprise, issuer, well_known
 
 
 @asynccontextmanager
@@ -53,6 +53,7 @@ app.add_middleware(
 
 app.include_router(enterprise.router, prefix="/api/enterprise", tags=["enterprise"])
 app.include_router(issuer.router, prefix="/api/issuer", tags=["issuer"])
+app.include_router(well_known.router, prefix="/.well-known", tags=["well-known"])
 
 
 @app.get("/api/health")
