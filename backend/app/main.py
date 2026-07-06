@@ -49,6 +49,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Demo-Document-Id"],
 )
 
 app.include_router(enterprise.router, prefix="/api/enterprise", tags=["enterprise"])
@@ -58,6 +59,8 @@ app.include_router(well_known.router, prefix="/.well-known", tags=["well-known"]
 
 @app.get("/api/health")
 def health():
+    from app.services.agents import llm_client
+
     db_ok = False
     if is_db_enabled():
         try:
@@ -67,4 +70,13 @@ def health():
     return {
         "status": "ok",
         "database": "connected" if db_ok else ("disabled" if not is_db_enabled() else "error"),
+        "git_commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("GIT_COMMIT", ""))[:12],
+        "features": {
+            "trial_company_submit": True,
+            "demo_volume_fields": True,
+        },
+        "anthropic": {
+            "doc_key": bool(llm_client.doc_api_key()),
+            "research_key": bool(llm_client.research_api_key()),
+        },
     }

@@ -116,18 +116,45 @@ def check_good_standing(status: str | None, extractions: list[dict] | None = Non
     return {"result": "FLAG", "detail": f"Unclear status: {status}"}
 
 
-def check_address(user_address, public_address) -> dict:
+def _address_from_extractions(extractions: list[dict] | None) -> str:
+    for ext in extractions or []:
+        addr = as_text((ext.get("extracted") or {}).get("address"))
+        if addr:
+            return addr
+    return ""
+
+
+def _purpose_from_extractions(extractions: list[dict] | None) -> str:
+    for ext in extractions or []:
+        extracted = ext.get("extracted") or {}
+        for fact in extracted.get("key_facts") or []:
+            text = str(fact)
+            if "business purpose:" in text.lower():
+                return text.split(":", 1)[1].strip()
+    return ""
+
+
+def check_address(user_address, public_address, extractions: list[dict] | None = None) -> dict:
     user_address = as_text(user_address)
     public_address = as_text(public_address) or None
+    source = "public filing"
     if not user_address:
         return {"result": "SKIP", "detail": "Add your operating address to compare"}
     if not public_address:
-        return {"result": "SKIP", "detail": "Waiting on public record — check the Public record tab"}
+        doc_addr = _address_from_extractions(extractions)
+        if doc_addr:
+            public_address = doc_addr
+            source = "uploaded formation document"
+        else:
+            return {
+                "result": "SKIP",
+                "detail": "Address on form — registry cross-check unavailable (no public record loaded)",
+            }
 
     user_norm = normalize_address(user_address)
     public_norm = normalize_address(public_address)
     if user_norm == public_norm or user_norm in public_norm or public_norm in user_norm:
-        return {"result": "PASS", "detail": "Matches address on public filing"}
+        return {"result": "PASS", "detail": f"Matches address on {source}"}
 
     user_state = extract_state_from_address(user_address)
     public_state = extract_state_from_address(public_address)
@@ -135,27 +162,33 @@ def check_address(user_address, public_address) -> dict:
     if user_state and public_state and user_state == public_state:
         return {
             "result": "PASS",
-            "detail": f"Different street from registered agent, both in {user_state} — typical for corporations",
+            "detail": f"Different street from {source}, both in {user_state} — typical for corporations",
         }
     if user_state and public_state and user_state != public_state:
         return {
             "result": "FLAG",
-            "detail": f"Your address is in {user_state}; registered agent on file is in {public_state}",
+            "detail": f"Your address is in {user_state}; address on {source} is in {public_state}",
         }
-    return {"result": "FLAG", "detail": "Could not confirm your address aligns with the public filing"}
+    return {"result": "FLAG", "detail": f"Could not confirm your address aligns with the {source}"}
 
 
-def check_purpose(user_purpose: str, public_purpose: str | None) -> dict:
+def check_purpose(user_purpose: str, public_purpose: str | None, extractions: list[dict] | None = None) -> dict:
     if not user_purpose:
         return {"result": "SKIP", "detail": "Add your business purpose to compare"}
     if not public_purpose:
-        return {"result": "SKIP", "detail": "Waiting on public record — check the Public record tab"}
+        doc_purpose = _purpose_from_extractions(extractions)
+        if doc_purpose:
+            public_purpose = doc_purpose
+        else:
+            return {
+                "result": "SKIP",
+                "detail": "Purpose on form — registry cross-check unavailable (no public record loaded)",
+            }
 
     user_words = set(re.findall(r"[a-z]{4,}", user_purpose.lower()))
     public_words = set(re.findall(r"[a-z]{4,}", public_purpose.lower()))
     overlap = user_words & public_words
     risky_user = {"crypto", "cryptocurrency", "exchange", "stablecoin", "gambling"}
-    risky_public = {"software", "payment", "financial", "technology", "consulting"}
 
     if user_words & risky_user and not (user_words & public_words):
         return {
@@ -448,8 +481,19 @@ def middesk_corroborate(_legal_name: str, _state: str) -> dict:
     }
 
 
+def _effective_public_facts(session: dict) -> dict:
+    """Merge trial registry fixture when UI sent trial_company_id but search did not run."""
+    from app.services.demo_companies import trial_public_facts
+
+    public = dict(session.get("public_facts") or {})
+    trial_id = session.get("trial_company_id")
+    if trial_id and not public.get("trial_company_id"):
+        public.update(trial_public_facts(trial_id))
+    return public
+
+
 def build_scorecard(session: dict) -> dict:
-    public = session.get("public_facts") or {}
+    public = _effective_public_facts(session)
     user = session.get("user_claims") or {}
     docs = session.get("documents") or []
     extractions = session.get("doc_extractions") or []
@@ -459,8 +503,8 @@ def build_scorecard(session: dict) -> dict:
         (2, check_formation_documents(public, docs)),
         (3, check_good_standing(public.get("status"), extractions)),
         (4, check_ofac(user.get("legal_name", ""))),
-        (5, check_address(user.get("operating_address", ""), public.get("registered_agent_address"))),
-        (6, check_purpose(user.get("business_purpose", ""), public.get("naics_or_purpose"))),
+        (5, check_address(user.get("operating_address", ""), public.get("registered_agent_address"), extractions)),
+        (6, check_purpose(user.get("business_purpose", ""), public.get("naics_or_purpose"), extractions)),
         (7, check_ein(user.get("ein", ""), extractions)),
         (8, check_ownership(user.get("beneficial_owners", []), extractions)),
         (9, check_control_persons(user.get("control_persons", []), extractions)),

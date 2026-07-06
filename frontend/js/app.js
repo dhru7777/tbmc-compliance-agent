@@ -109,7 +109,7 @@ function checklistStatusLabel(result) {
     PASS: "Confirmed",
     FLAG: "Review",
     BLOCK: "Blocked",
-    SKIP: "Skipped",
+    SKIP: "Not verified",
   };
   return map[result] || result;
 }
