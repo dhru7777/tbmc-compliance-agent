@@ -83,112 +83,120 @@ async def run_kyb_pipeline(
     last_search: dict | None = None
     search_performed = False
 
-    # --- ReAct loop ---
-    for round_num in range(1, MAX_REACT_ROUNDS + 1):
-        decision = await asyncio.to_thread(
-            research_planner.plan_next_action,
-            claims=claims,
-            gap_list=gap_list,
-            public_facts=public_facts,
-            last_search_result=last_search,
-            round_num=round_num,
-            usage_session=usage,
-        )
-        action = decision.get("action", "finish")
-        reason = decision.get("reason", "")
-        think_label = decision.get("think_label") or short_words(reason, 4)
-        act_label = decision.get("act_label") or short_words(action.replace("_", " "), 4)
-
+    # --- ReAct loop (skipped for trial packages — fictional entities use registry fixtures) ---
+    if trial_id:
         await trace.emit(
-            "think",
-            "research_planner",
-            reason or f"Evaluating round {round_num}…",
-            label=think_label,
-            action=action,
-            round=round_num,
-            missing_for_search=decision.get("missing_for_search") or [],
+            "observe",
+            "orchestrator",
+            "Trial package — skipping public registry search (deterministic fixture loaded).",
+            label="skip trial search",
+            trial_company_id=trial_id,
         )
-
-        if action == "skip_search":
-            break
-
-        if action == "finish":
-            break
-
-        if action == "need_internal":
-            missing = decision.get("missing_for_search") or []
-            await trace.emit(
-                "act",
-                "public_search",
-                f"Cannot search yet — need: {', '.join(missing)}",
-                label=act_label,
-                missing_for_search=missing,
-            )
-            gaps.enrich_claims_from_documents(user, doc_extractions)
-            claims = gaps.build_claims_summary(user, doc_extractions, documents)
-            gap_list = gaps.analyze_gaps(user, doc_extractions, documents)
-            await trace.emit(
-                "observe",
-                "orchestrator",
-                "Re-checked internal sources after search agent feedback.",
-                label=observe_label_for_action("need_internal"),
+    else:
+        for round_num in range(1, MAX_REACT_ROUNDS + 1):
+            decision = await asyncio.to_thread(
+                research_planner.plan_next_action,
                 claims=claims,
+                gap_list=gap_list,
+                public_facts=public_facts,
+                last_search_result=last_search,
+                round_num=round_num,
+                usage_session=usage,
             )
-            continue
+            action = decision.get("action", "finish")
+            reason = decision.get("reason", "")
+            think_label = decision.get("think_label") or short_words(reason, 4)
+            act_label = decision.get("act_label") or short_words(action.replace("_", " "), 4)
 
-        if action == "public_search":
-            query = decision.get("public_query") or gaps.public_search_query(user)
-            ok, missing = public_search.validate_public_query(query)
-            if not ok:
+            await trace.emit(
+                "think",
+                "research_planner",
+                reason or f"Evaluating round {round_num}…",
+                label=think_label,
+                action=action,
+                round=round_num,
+                missing_for_search=decision.get("missing_for_search") or [],
+            )
+
+            if action == "skip_search":
+                break
+
+            if action == "finish":
+                break
+
+            if action == "need_internal":
+                missing = decision.get("missing_for_search") or []
                 await trace.emit(
                     "act",
                     "public_search",
-                    f"Search blocked — missing public fields: {', '.join(missing)}",
-                    label=short_words(f"blocked need {' '.join(missing)}", 4),
+                    f"Cannot search yet — need: {', '.join(missing)}",
+                    label=act_label,
                     missing_for_search=missing,
+                )
+                gaps.enrich_claims_from_documents(user, doc_extractions)
+                claims = gaps.build_claims_summary(user, doc_extractions, documents)
+                gap_list = gaps.analyze_gaps(user, doc_extractions, documents)
+                await trace.emit(
+                    "observe",
+                    "orchestrator",
+                    "Re-checked internal sources after search agent feedback.",
+                    label=observe_label_for_action("need_internal"),
+                    claims=claims,
                 )
                 continue
 
-            safe_name = query["legal_name"]
-            safe_state = query["state"]
-            await trace.emit(
-                "think",
-                "public_search",
-                f"Registry lookup for {safe_name} in {safe_state}.",
-                label=short_words(f"search {safe_state} registry", 4),
-            )
-            await trace.emit(
-                "act",
-                "public_search",
-                f"Searching public registry for «{safe_name}» ({safe_state}) — public fields only.",
-                label=short_words(f"web search {safe_state}", 4),
-                public_query=query,
-            )
+            if action == "public_search":
+                query = decision.get("public_query") or gaps.public_search_query(user)
+                ok, missing = public_search.validate_public_query(query)
+                if not ok:
+                    await trace.emit(
+                        "act",
+                        "public_search",
+                        f"Search blocked — missing public fields: {', '.join(missing)}",
+                        label=short_words(f"blocked need {' '.join(missing)}", 4),
+                        missing_for_search=missing,
+                    )
+                    continue
 
-            last_search = await public_search.run_bounded_search(safe_name, safe_state, usage)
-            public_facts = last_search.get("public_facts")
-            session["public_facts"] = public_facts
-            search_performed = True
+                safe_name = query["legal_name"]
+                safe_state = query["state"]
+                await trace.emit(
+                    "think",
+                    "public_search",
+                    f"Registry lookup for {safe_name} in {safe_state}.",
+                    label=short_words(f"search {safe_state} registry", 4),
+                )
+                await trace.emit(
+                    "act",
+                    "public_search",
+                    f"Searching public registry for «{safe_name}» ({safe_state}) — public fields only.",
+                    label=short_words(f"web search {safe_state}", 4),
+                    public_query=query,
+                )
 
-            status = last_search.get("status", "completed")
-            summary = last_search.get("summary", "")
-            pf_status = (public_facts or {}).get("status", "unknown")
-            observe_msg = f"Registry result: {pf_status} — {summary}"
-            await trace.emit(
-                "observe",
-                "public_search",
-                observe_msg,
-                label=short_words(summary or pf_status or "search done", 4),
-                search_performed=True,
-                status=status,
-                confidence=(public_facts or {}).get("confidence"),
-            )
+                last_search = await public_search.run_bounded_search(safe_name, safe_state, usage)
+                public_facts = last_search.get("public_facts")
+                session["public_facts"] = public_facts
+                search_performed = True
 
-            gap_list = gaps.analyze_gaps(user, doc_extractions, documents)
-            if not gaps.public_gaps_remain(gap_list) or round_num >= MAX_REACT_ROUNDS:
-                break
-            continue
+                status = last_search.get("status", "completed")
+                summary = last_search.get("summary", "")
+                pf_status = (public_facts or {}).get("status", "unknown")
+                observe_msg = f"Registry result: {pf_status} — {summary}"
+                await trace.emit(
+                    "observe",
+                    "public_search",
+                    observe_msg,
+                    label=short_words(summary or pf_status or "search done", 4),
+                    search_performed=True,
+                    status=status,
+                    confidence=(public_facts or {}).get("confidence"),
+                )
 
+                gap_list = gaps.analyze_gaps(user, doc_extractions, documents)
+                if not gaps.public_gaps_remain(gap_list) or round_num >= MAX_REACT_ROUNDS:
+                    break
+                continue
     if not search_performed:
         public_facts = session.get("public_facts")
         if not public_facts or not public_facts.get("trial_company_id"):

@@ -89,8 +89,19 @@ def _standing_is_active(text: str) -> bool:
     return any(t in lower for t in active_tokens)
 
 
+def _normalize_registry_status(status: str | None) -> str | None:
+    """Treat inconclusive web-search statuses as missing so document evidence can apply."""
+    if not status:
+        return None
+    lower = status.strip().lower()
+    if lower in ("unknown", "null", "none", "n/a", "not found", "not_available", "unavailable"):
+        return None
+    return status
+
+
 def check_good_standing(status: str | None, extractions: list[dict] | None = None) -> dict:
     extractions = extractions or []
+    status = _normalize_registry_status(status)
     if not status:
         for ext in extractions:
             extracted = ext.get("extracted") or {}
@@ -324,9 +335,12 @@ def _ein_from_extractions(extractions: list[dict]) -> str:
 
 def _has_id_document(documents: list[dict], extractions: list[dict]) -> bool:
     id_tokens = ("government id", "gov id", "passport", "driver", "drivers", " license", " state id", "04 id")
-    labels = " ".join(d.get("label", "").lower() for d in documents)
+    labels = " ".join(
+        f"{d.get('label', '')} {d.get('filename', '')}".lower() for d in documents
+    )
     for ext in extractions:
         labels += " " + (ext.get("label") or "").lower()
+        labels += " " + (ext.get("filename") or "").lower()
         extracted = ext.get("extracted") or {}
         if extracted.get("document_type") == "government_id":
             return True
@@ -482,13 +496,14 @@ def middesk_corroborate(_legal_name: str, _state: str) -> dict:
 
 
 def _effective_public_facts(session: dict) -> dict:
-    """Merge trial registry fixture when UI sent trial_company_id but search did not run."""
+    """Trial packages use deterministic registry fixtures; manual runs use session search results."""
     from app.services.demo_companies import trial_public_facts
 
-    public = dict(session.get("public_facts") or {})
     trial_id = session.get("trial_company_id")
-    if trial_id and not public.get("trial_company_id"):
-        public.update(trial_public_facts(trial_id))
+    if trial_id:
+        return trial_public_facts(trial_id)
+
+    public = dict(session.get("public_facts") or {})
     return public
 
 
@@ -561,7 +576,7 @@ def build_scorecard(session: dict) -> dict:
 
 
 def _compute_confidence_score(session: dict, items: list[dict], kyb_status: str) -> float:
-    public = session.get("public_facts") or {}
+    public = _effective_public_facts(session)
     base = public.get("confidence")
     if base is None:
         base = 1.0 if kyb_status == "passed" else 0.5
