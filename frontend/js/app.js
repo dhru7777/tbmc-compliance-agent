@@ -9,7 +9,7 @@ let checklistRunState = {};
 const owners = [];
 const controlPersons = [];
 const pendingDocs = [];
-/** Last submit payload — used when user clicks Add to network / Generate certificate. */
+/** Last submit payload — used when user clicks Generate certificate. */
 let lastSubmitResult = null;
 let networkAdmissionGranted = false;
 
@@ -449,15 +449,14 @@ function resetChecklistPending() {
 function resetCertificatePanel() {
   networkAdmissionGranted = false;
   lastSubmitResult = null;
+  const layout = document.getElementById("scorecard-layout");
   const column = document.getElementById("certificate-column");
   const inner = document.getElementById("certificate-column-inner");
-  if (!inner) return;
+  layout?.classList.remove("has-certificate");
+  column?.classList.add("hidden");
+  column?.setAttribute("hidden", "");
   column?.classList.remove("is-active", "is-loading");
-  inner.innerHTML = `
-    <div class="certificate-placeholder" id="certificate-placeholder">
-      <p class="certificate-placeholder-title">Compliance certificate</p>
-      <p class="certificate-placeholder-text">When verification passes, click <strong>Add to network</strong> to generate and preview your signed certificate here.</p>
-    </div>`;
+  if (inner) inner.innerHTML = "";
 }
 
 function getCertificatePdfUrl(data) {
@@ -469,16 +468,22 @@ function getCertificatePdfUrl(data) {
 }
 
 function showCertificatePanel(data) {
+  const layout = document.getElementById("scorecard-layout");
   const inner = document.getElementById("certificate-column-inner");
   const column = document.getElementById("certificate-column");
   if (!inner || !column) return;
 
-  const pdfUrl = getCertificatePdfUrl(data || lastSubmitResult);
+  const payload = data || lastSubmitResult;
+  const pdfUrl = getCertificatePdfUrl(payload);
+
   if (!pdfUrl) {
-    inner.innerHTML = `<p class="certificate-placeholder-text certificate-error">Certificate not available. Complete verification with a passing score first.</p>`;
+    alert("Certificate not available. Complete verification with a passing score first.");
     return;
   }
 
+  layout?.classList.add("has-certificate");
+  column.classList.remove("hidden");
+  column.removeAttribute("hidden");
   column.classList.add("is-active", "is-loading");
   const cacheBust = `t=${Date.now()}`;
   const src = pdfUrl.includes("?") ? `${pdfUrl}&${cacheBust}` : `${pdfUrl}?${cacheBust}`;
@@ -490,8 +495,8 @@ function showCertificatePanel(data) {
     </div>
     <iframe class="certificate-frame" id="certificate-frame" src="${escapeHtml(src)}" title="Compliance certificate"></iframe>
     <div class="certificate-column-actions">
-      <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-compliance-certificate.pdf" target="_blank" rel="noopener">Download PDF</a>
-      <a class="btn btn-secondary certificate-open" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open in new tab</a>
+      <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-compliance-certificate.pdf">Download PDF</a>
+      <a class="btn btn-secondary certificate-open" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open PDF</a>
     </div>`;
 
   const frame = document.getElementById("certificate-frame");
@@ -501,37 +506,44 @@ function showCertificatePanel(data) {
 }
 
 function bindScorecardActions(data) {
-  const addBtn = document.getElementById("kyb-add-to-network");
   const genBtn = document.getElementById("kyb-generate-cert");
 
-  const grantAdmission = () => {
+  genBtn?.addEventListener("click", () => {
     if (networkAdmissionGranted) {
       showCertificatePanel(data);
       return;
     }
     networkAdmissionGranted = true;
-    if (addBtn) {
-      addBtn.disabled = true;
-      addBtn.textContent = "Added to network";
-      addBtn.classList.remove("btn-primary");
-      addBtn.classList.add("btn-secondary");
-    }
     if (genBtn) {
       genBtn.disabled = true;
       genBtn.textContent = "Certificate generated";
+      genBtn.classList.remove("btn-primary");
+      genBtn.classList.add("btn-secondary");
     }
     showCertificatePanel(data);
     columnScrollIntoView();
-  };
-
-  addBtn?.addEventListener("click", grantAdmission);
-  genBtn?.addEventListener("click", grantAdmission);
+  });
 }
 
 function columnScrollIntoView() {
   if (window.matchMedia("(max-width: 900px)").matches) {
     document.getElementById("certificate-column")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+}
+
+function scrollToVerificationPanels() {
+  const header = document.querySelector(".site-header");
+  const headerOffset = header ? header.getBoundingClientRect().height + 12 : 72;
+  const target =
+    document.querySelector(".kyb-sidebar") ||
+    document.getElementById("agent-trace-panel") ||
+    document.getElementById("wizard-steps");
+  if (!target) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const y = target.getBoundingClientRect().top + window.scrollY - headerOffset;
+  window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
 }
 
 function renderScorecard(data) {
@@ -598,17 +610,16 @@ function renderScorecard(data) {
     ${
       sc.kyb_status === "passed"
         ? `<div class="admission-panel">
-            <p class="admission-panel-title">Admission to network</p>
+            <p class="admission-panel-title">Clearinghouse admission</p>
             <p class="admission-panel-meta">Confidence score: ${escapeHtml(confidenceLabel)}${
               creditLimit != null
                 ? ` · Approved credit limit: $${Number(creditLimit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`
                 : ""
             }</p>
             <div class="admission-actions">
-              <button type="button" class="btn btn-primary" id="kyb-add-to-network">Add to network</button>
-              <button type="button" class="btn btn-secondary" id="kyb-generate-cert">Generate certificate</button>
+              <button type="button" class="btn btn-primary" id="kyb-generate-cert">Generate certificate</button>
             </div>
-            <p class="admission-panel-hint">Adds your business to the clearinghouse network and displays the signed compliance certificate on the right.</p>
+            <p class="admission-panel-hint">Generates your signed compliance certificate and previews the PDF on the right.</p>
           </div>`
         : ""
     }
@@ -738,7 +749,9 @@ async function loadDemoCompanyOptions() {
         .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`)
         .join("");
     if (statusEl) {
-      statusEl.textContent = `${companies.length} trial packages available (${companies.filter((c) => c.complete).length} complete, ${companies.filter((c) => !c.complete).length} incomplete).`;
+      const complete = companies.filter((c) => c.complete).length;
+      const incomplete = companies.length - complete;
+      statusEl.textContent = `Select a trial package (${complete} complete, ${incomplete} incomplete) or upload your own document.`;
       statusEl.classList.remove("hidden");
     }
   } catch (err) {
@@ -976,6 +989,7 @@ document.addEventListener("DOMContentLoaded", () => {
     clearAgentTrace();
     document.getElementById("verify-panel")?.setAttribute("open", "");
     document.getElementById("agent-trace-panel")?.setAttribute("open", "");
+    requestAnimationFrame(() => scrollToVerificationPanels());
 
     try {
       await ensureSession();

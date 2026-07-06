@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=37" />
+  <link rel="stylesheet" href="css/styles.css?v=45" />
 </head>
 <body class="landing-active">
 
@@ -64,7 +64,24 @@
     <div class="wizard-panel active" id="kyb-step-1">
       <div class="kyb-layout">
         <div class="kyb-main">
-          <section class="kyb-section">
+          <section class="kyb-section documents-section">
+            <h3 class="kyb-section-title">Documents <span class="field-required">Required</span></h3>
+            <div class="demo-company-row">
+              <label for="demo-company-select">Trial company</label>
+              <select id="demo-company-select">
+                <option value="">Select sample package…</option>
+              </select>
+              <p id="demo-company-hint" class="demo-company-hint hidden"></p>
+              <p id="demo-company-status" class="demo-company-status hidden"></p>
+            </div>
+            <div class="doc-upload-row">
+              <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
+              <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
+            </div>
+            <ul class="doc-list" id="enterprise-doc-list"></ul>
+          </section>
+
+          <section class="kyb-section company-details-section">
             <h3 class="kyb-section-title">Company details</h3>
             <div class="form-row two-col">
               <div class="form-group">
@@ -91,34 +108,14 @@
               <label for="kyb_purpose">Business purpose</label>
               <input type="text" id="kyb_purpose" placeholder="Stablecoin clearinghouse" />
             </div>
-            <div class="form-row two-col">
-              <div class="form-group">
-                <label for="kyb_volume_low">Expected monthly volume (USD) — low</label>
-                <input type="number" id="kyb_volume_low" placeholder="80000" min="0" step="1000" />
-              </div>
-              <div class="form-group">
-                <label for="kyb_volume_high">Expected monthly volume (USD) — high</label>
-                <input type="number" id="kyb_volume_high" placeholder="220000" min="0" step="1000" />
+            <div class="form-group volume-range-group">
+              <label class="volume-range-label" for="kyb_volume_low">Expected monthly volume (USD)</label>
+              <div class="volume-range-row">
+                <input type="number" id="kyb_volume_low" placeholder="From" min="0" step="1000" aria-label="Monthly volume from" />
+                <span class="volume-range-dash" aria-hidden="true">–</span>
+                <input type="number" id="kyb_volume_high" placeholder="To" min="0" step="1000" aria-label="Monthly volume to" />
               </div>
             </div>
-          </section>
-
-          <section class="kyb-section documents-section">
-            <h3 class="kyb-section-title">Documents <span class="field-required">Required</span></h3>
-            <div class="demo-company-row">
-              <label for="demo-company-select">Trial company</label>
-              <select id="demo-company-select">
-                <option value="">Select sample package…</option>
-              </select>
-              <p id="demo-company-hint" class="demo-company-hint hidden"></p>
-              <p id="demo-company-status" class="demo-company-status hidden"></p>
-            </div>
-            <p class="kyb-section-hint">Choose a trial package (3 complete, 2 incomplete) or upload your own formation document.</p>
-            <div class="doc-upload-row">
-              <input type="file" id="enterprise-doc-file" accept=".pdf,.png,.jpg,.jpeg,.txt" multiple />
-              <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
-            </div>
-            <ul class="doc-list" id="enterprise-doc-list"></ul>
           </section>
 
           <section class="kyb-section kyb-people-grid">
@@ -166,17 +163,12 @@
 
     <!-- Scorecard -->
     <div class="wizard-panel" id="kyb-step-2">
-      <div class="scorecard-layout">
+      <div class="scorecard-layout" id="scorecard-layout">
         <div class="scorecard-column">
           <div id="kyb-scorecard"></div>
         </div>
-        <aside class="certificate-column" id="certificate-column" aria-label="Compliance certificate">
-          <div class="certificate-column-inner" id="certificate-column-inner">
-            <div class="certificate-placeholder" id="certificate-placeholder">
-              <p class="certificate-placeholder-title">Compliance certificate</p>
-              <p class="certificate-placeholder-text">When verification passes, click <strong>Add to network</strong> to generate and preview your signed certificate here.</p>
-            </div>
-          </div>
+        <aside class="certificate-column hidden" id="certificate-column" aria-label="Compliance certificate" hidden>
+          <div class="certificate-column-inner" id="certificate-column-inner"></div>
         </aside>
       </div>
       <div class="wizard-nav">
@@ -239,6 +231,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=38"></script>
+  <script src="js/app.js?v=45"></script>
 </body>
 </html>
