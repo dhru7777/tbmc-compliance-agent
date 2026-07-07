@@ -1648,6 +1648,14 @@ body.landing-active .site-footer {
   -webkit-overflow-scrolling: touch;
 }
 
+.certificate-pdf-error {
+  margin: 0;
+  padding: 1rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .certificate-zoom-inner {
   transform-origin: top center;
   width: 100%;

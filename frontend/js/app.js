@@ -958,10 +958,61 @@ const CERTIFICATE_TABS = [
 ];
 
 let certificateZoom = 1;
+let certificateBlobUrl = null;
 const CERT_ZOOM_MIN = 0.5;
 const CERT_ZOOM_MAX = 2.5;
 const CERT_ZOOM_STEP = 0.12;
 const CERT_FRAME_BASE_HEIGHT = 720;
+
+function revokeCertificateBlobUrl() {
+  if (certificateBlobUrl) {
+    URL.revokeObjectURL(certificateBlobUrl);
+    certificateBlobUrl = null;
+  }
+}
+
+async function loadCertificatePdfIntoFrame(pdfUrl, column) {
+  const frame = document.getElementById("certificate-frame");
+  const viewport = document.getElementById("certificate-viewport");
+  document.getElementById("certificate-pdf-error")?.remove();
+  if (!frame) return;
+
+  try {
+    const res = await fetch(pdfUrl, { mode: "cors" });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        detail = err.detail || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    const blob = await res.blob();
+    if (!blob.size) {
+      throw new Error("PDF response was empty");
+    }
+    if (blob.type && blob.type.includes("json")) {
+      const text = await blob.text();
+      throw new Error(text.slice(0, 160) || "Server did not return a PDF");
+    }
+    revokeCertificateBlobUrl();
+    certificateBlobUrl = URL.createObjectURL(blob);
+    frame.src = certificateBlobUrl;
+  } catch (err) {
+    frame.removeAttribute("src");
+    if (viewport) {
+      const msg = document.createElement("p");
+      msg.id = "certificate-pdf-error";
+      msg.className = "certificate-pdf-error";
+      msg.textContent = `Could not load PDF preview: ${err.message}. Try Open PDF or Download PDF.`;
+      viewport.prepend(msg);
+    }
+  } finally {
+    column?.classList.remove("is-loading");
+  }
+}
 
 function setCertificateZoom(scale) {
   certificateZoom = Math.min(CERT_ZOOM_MAX, Math.max(CERT_ZOOM_MIN, Math.round(scale * 100) / 100));
@@ -1038,7 +1089,7 @@ function showCertificatePanel(data) {
     </div>
     <div class="certificate-viewport" id="certificate-viewport">
       <div class="certificate-zoom-inner" id="certificate-zoom-inner">
-        <iframe class="certificate-frame" id="certificate-frame" src="${escapeHtml(src)}" title="Verification certificate"></iframe>
+        <iframe class="certificate-frame" id="certificate-frame" title="Verification certificate"></iframe>
       </div>
     </div>
     <div class="certificate-column-actions">
@@ -1058,10 +1109,7 @@ function showCertificatePanel(data) {
     });
   });
 
-  const frame = document.getElementById("certificate-frame");
-  if (frame) {
-    frame.addEventListener("load", () => column.classList.remove("is-loading"), { once: true });
-  }
+  loadCertificatePdfIntoFrame(src, column);
 }
 
 function bindScorecardActions(data) {

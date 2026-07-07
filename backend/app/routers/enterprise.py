@@ -511,6 +511,18 @@ _CERT_FILENAMES = {
 }
 
 
+def _pdf_response(pdf: bytes, filename: str) -> Response:
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "Cross-Origin-Resource-Policy": "cross-origin",
+        },
+    )
+
+
 @router.get("/kyb/{session_id}/credentials/{kind}.pdf")
 def kyb_certificate_by_kind(session_id: str, kind: str):
     if kind not in _CERT_FILENAMES:
@@ -519,14 +531,7 @@ def kyb_certificate_by_kind(session_id: str, kind: str):
         pdf = kyb_service.get_certificate_pdf(session_id, kind)
         if not pdf:
             raise HTTPException(status_code=404, detail="Certificate not issued yet")
-        return Response(
-            content=pdf,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="{_CERT_FILENAMES[kind]}-{session_id[:8]}.pdf"',
-                "Cache-Control": "no-store",
-            },
-        )
+        return _pdf_response(pdf, f"{_CERT_FILENAMES[kind]}-{session_id[:8]}.pdf")
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -537,14 +542,7 @@ def kyb_credential_pdf(session_id: str):
         pdf = kyb_service.get_certificate_pdf(session_id, "compliance")
         if not pdf:
             raise HTTPException(status_code=404, detail="Certificate not issued yet")
-        return Response(
-            content=pdf,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="tbmc-compliance-certificate-{session_id[:8]}.pdf"',
-                "Cache-Control": "no-store",
-            },
-        )
+        return _pdf_response(pdf, f"tbmc-compliance-certificate-{session_id[:8]}.pdf")
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 

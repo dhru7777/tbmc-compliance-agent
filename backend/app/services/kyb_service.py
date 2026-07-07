@@ -867,17 +867,20 @@ def get_certificate_pdf(session_id: str, kind: str = "compliance") -> bytes | No
     pdf = credential_store.load_certificate_pdf(session_id, kind)
     if pdf:
         return pdf
-    if kind != "compliance":
-        return None
+
     cred = credential_store.load_credential(session_id)
     if not cred:
         return None
+
     layered = load_layered_credentials(session_id)
     kya = load_kya_proof(session_id)
     pdfs = x401_service.render_all_certificate_pdfs(cred, layered_credentials=layered, kya_proof=kya)
+    if not pdfs:
+        return None
     credential_store.save_certificate_bundle(session_id, pdfs)
-    credential_store.save_credential(session_id, cred, pdfs.get("compliance"))
-    return pdfs.get("compliance")
+    if kind == "compliance":
+        credential_store.save_credential(session_id, cred, pdfs.get("compliance"))
+    return pdfs.get(kind)
 
 
 def get_record(session_id: str) -> str:
