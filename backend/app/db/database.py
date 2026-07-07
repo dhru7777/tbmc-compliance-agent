@@ -17,6 +17,8 @@ _SessionLocal: sessionmaker | None = None
 
 
 def database_url() -> str:
+    if os.getenv("DISABLE_DATABASE", "").strip().lower() in ("1", "true", "yes"):
+        return ""
     return os.getenv("DATABASE_URL", "").strip()
 
 
