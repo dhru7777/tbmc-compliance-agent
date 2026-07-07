@@ -1685,6 +1685,15 @@ body.landing-active .site-footer {
   background: #fff;
 }
 
+.certificate-pdf-embed {
+  display: block;
+  width: 100%;
+  min-height: 22rem;
+  height: 720px;
+  border: none;
+  background: #fff;
+}
+
 @media (max-width: 900px) {
   .scorecard-layout.has-certificate {
     grid-template-columns: 1fr;
@@ -1700,8 +1709,13 @@ body.landing-active .site-footer {
     min-height: 20rem;
   }
 
-  .certificate-pdf-page {
+  .certificate-pdf-page,
+  .certificate-pdf-embed {
     min-height: 18rem;
+  }
+
+  .certificate-pdf-embed {
+    height: 28rem;
   }
 
   .cert-criteria-list {
@@ -2042,84 +2056,260 @@ body.landing-active .site-footer {
   z-index: 250;
   top: 0;
   left: 0;
-  width: min(22rem, calc(100vw - 1.5rem));
+  width: min(20rem, calc(100vw - 1.5rem));
+  padding: 0;
+  overflow: hidden;
 }
 
 .agent-cost-popover,
 .agent-cost-popover-portal {
-  padding: 0.75rem 0.85rem;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.1);
   text-align: left;
 }
 
 .agent-cost-popover[hidden],
-.agent-cost-popover-portal[hidden] {
+.agent-cost-popover-portal[hidden],
+.agent-cost-backdrop[hidden] {
   display: none;
 }
 
-.agent-cost-popover-title {
-  margin: 0 0 0.5rem;
+.agent-cost-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  background: rgba(26, 26, 26, 0.28);
+}
+
+body.agent-cost-open {
+  overflow: hidden;
+}
+
+.agent-cost-sheet {
+  left: 0.75rem !important;
+  right: 0.75rem !important;
+  bottom: 0.75rem !important;
+  top: auto !important;
+  width: auto !important;
+  max-width: none;
+  border-radius: var(--radius);
+}
+
+.agent-cost-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+.agent-cost-dialog-header {
+  padding: 0.85rem 0.9rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-cost-dialog-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.agent-cost-dialog-subtitle {
+  margin: 0.2rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-dialog-body {
+  padding: 0.55rem 0.9rem;
+  overflow-y: auto;
+  max-height: min(16rem, 48vh);
+  -webkit-overflow-scrolling: touch;
+}
+
+.agent-cost-sheet .agent-cost-dialog-body {
+  max-height: min(20rem, 52vh);
+}
+
+.agent-cost-dialog-footer {
+  padding: 0.65rem 0.9rem 0.8rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.agent-cost-tokens {
+  margin: 0 0 0.45rem;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-empty {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  margin-bottom: 0.45rem;
+}
+
+.agent-cost-group:last-child {
+  margin-bottom: 0;
+}
+
+.agent-cost-group-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-cost-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-cost-group-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.agent-cost-group-title {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);
 }
 
-.agent-cost-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.6875rem;
-}
-
-.agent-cost-table th,
-.agent-cost-table td {
-  padding: 0.25rem 0.35rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-.agent-cost-table th {
-  font-weight: 600;
-  color: var(--text-muted);
-  text-align: left;
-}
-
-.agent-cost-source {
-  text-transform: capitalize;
+.agent-cost-group-hint {
   font-size: 0.625rem;
-  font-weight: 600;
-}
-
-.agent-cost-source-live {
-  color: var(--accent);
-}
-
-.agent-cost-source-cache,
-.agent-cost-source-skipped {
   color: var(--text-muted);
 }
 
-.agent-cost-by-agent {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
-  font-size: 0.6875rem;
+.agent-cost-group-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  flex-shrink: 0;
 }
 
-.agent-cost-by-agent li {
+.agent-cost-group-count {
+  font-size: 0.625rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-group-amount {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-cost-group-meta {
+  margin: 0;
+  padding: 0 0.65rem 0.35rem;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.65rem 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.agent-cost-item {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.15rem 0;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(212, 207, 196, 0.55);
+  font-size: 0.6875rem;
 }
 
-.agent-cost-popover-total {
-  margin: 0.5rem 0 0;
+.agent-cost-item:last-child {
+  border-bottom: none;
+}
+
+.agent-cost-item-name {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-cost-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.agent-cost-item-amount {
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-cost-pill {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+}
+
+.agent-cost-pill-live {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.agent-cost-pill-cache {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.agent-cost-pill-skipped {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.agent-cost-trust {
   font-size: 0.6875rem;
   color: var(--text-muted);
+}
+
+.agent-cost-trust summary {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  list-style: none;
+}
+
+.agent-cost-trust summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-cost-trust p {
+  margin: 0.4rem 0 0;
   line-height: 1.45;
+  font-size: 0.625rem;
 }
 
 .scorecard-result {

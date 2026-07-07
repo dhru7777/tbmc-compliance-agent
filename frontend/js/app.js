@@ -1027,7 +1027,11 @@ function resetCertificatePanel() {
   networkAdmissionGranted = false;
   lastSubmitResult = null;
   certificatePdfBytes = null;
+  certificateRenderMode = "canvas";
+  revokeCertificateBlobUrl();
   document.getElementById("agent-cost-popover-portal")?.remove();
+  document.getElementById("agent-cost-backdrop")?.remove();
+  document.body.classList.remove("agent-cost-open");
   const layout = document.getElementById("scorecard-layout");
   const column = document.getElementById("certificate-column");
   const inner = document.getElementById("certificate-column-inner");
@@ -1061,19 +1065,25 @@ const CERTIFICATE_TABS = [
 
 let certificateZoom = 1;
 let certificatePdfBytes = null;
+let certificateBlobUrl = null;
+let certificateRenderMode = "canvas";
 const CERT_ZOOM_MIN = 0.5;
 const CERT_ZOOM_MAX = 2.5;
 const CERT_ZOOM_STEP = 0.12;
-const CERT_PDF_BASE_SCALE = 1.35;
+const CERT_PDF_BASE_SCALE = 1.2;
 
-async function loadPdfJs() {
-  if (!window._pdfjsLib) {
-    const lib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs");
-    lib.GlobalWorkerOptions.workerSrc =
-      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
-    window._pdfjsLib = lib;
+function revokeCertificateBlobUrl() {
+  if (certificateBlobUrl) {
+    URL.revokeObjectURL(certificateBlobUrl);
+    certificateBlobUrl = null;
   }
-  return window._pdfjsLib;
+}
+
+function getPdfJsLib() {
+  if (!window.pdfjsLib) {
+    throw new Error("PDF viewer library not loaded");
+  }
+  return window.pdfjsLib;
 }
 
 function showCertificatePdfError(viewport, message) {
@@ -1086,10 +1096,11 @@ function showCertificatePdfError(viewport, message) {
   viewport.appendChild(msg);
 }
 
-async function renderCertificatePdfPages(viewport) {
-  if (!viewport || !certificatePdfBytes) return;
-  const pdfjsLib = await loadPdfJs();
-  const pdf = await pdfjsLib.getDocument({ data: certificatePdfBytes.slice(0) }).promise;
+async function renderCertificatePdfCanvas(viewport, bytes) {
+  const pdfjsLib = getPdfJsLib();
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+
   viewport.innerHTML = '<div class="certificate-pdf-pages" id="certificate-pdf-pages"></div>';
   const pagesWrap = document.getElementById("certificate-pdf-pages");
   if (!pagesWrap) return;
@@ -1101,8 +1112,33 @@ async function renderCertificatePdfPages(viewport) {
     canvas.className = "certificate-pdf-page";
     canvas.width = vp.width;
     canvas.height = vp.height;
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas not supported");
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
     pagesWrap.appendChild(canvas);
+  }
+  certificateRenderMode = "canvas";
+}
+
+function renderCertificatePdfEmbed(viewport, bytes) {
+  revokeCertificateBlobUrl();
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  certificateBlobUrl = URL.createObjectURL(blob);
+  viewport.innerHTML =
+    '<embed class="certificate-pdf-embed" type="application/pdf" title="Verification certificate" />';
+  const embed = viewport.querySelector(".certificate-pdf-embed");
+  if (!embed) throw new Error("Could not create PDF embed");
+  embed.src = certificateBlobUrl;
+  embed.style.width = `${Math.round(certificateZoom * 100)}%`;
+  certificateRenderMode = "embed";
+}
+
+async function renderCertificatePdfPreview(viewport, bytes) {
+  try {
+    await renderCertificatePdfCanvas(viewport, bytes);
+  } catch (canvasErr) {
+    console.warn("PDF.js canvas render failed, using embed fallback:", canvasErr);
+    renderCertificatePdfEmbed(viewport, bytes);
   }
 }
 
@@ -1111,6 +1147,7 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
   if (!viewport) return;
 
   const finishLoading = () => column?.classList.remove("is-loading");
+  viewport.innerHTML = '<p class="certificate-pdf-loading">Loading PDF…</p>';
 
   try {
     const res = await fetch(pdfUrl, { mode: "cors" });
@@ -1128,14 +1165,16 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
     if (!buf.byteLength) {
       throw new Error("PDF response was empty");
     }
-    const header = new TextDecoder().decode(buf.slice(0, 8));
+    const header = new TextDecoder().decode(new Uint8Array(buf).slice(0, 8));
     if (header.startsWith("{") || header.startsWith("[")) {
       throw new Error("Server did not return a PDF");
     }
     certificatePdfBytes = buf;
-    await renderCertificatePdfPages(viewport);
+    await renderCertificatePdfPreview(viewport, buf);
   } catch (err) {
     certificatePdfBytes = null;
+    certificateRenderMode = "canvas";
+    revokeCertificateBlobUrl();
     showCertificatePdfError(
       viewport,
       `Could not load PDF preview: ${err.message}. Try Open PDF or Download PDF.`
@@ -1150,9 +1189,13 @@ function setCertificateZoom(scale) {
   const label = document.getElementById("certificate-zoom-label");
   if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
   const viewport = document.getElementById("certificate-viewport");
-  if (viewport && certificatePdfBytes) {
-    renderCertificatePdfPages(viewport);
+  if (!viewport || !certificatePdfBytes) return;
+  if (certificateRenderMode === "embed") {
+    const embed = viewport.querySelector(".certificate-pdf-embed");
+    if (embed) embed.style.width = `${Math.round(certificateZoom * 100)}%`;
+    return;
   }
+  renderCertificatePdfPreview(viewport, certificatePdfBytes);
 }
 
 function bindCertificateZoomControls() {
@@ -1240,48 +1283,129 @@ function showCertificatePanel(data) {
   loadCertificatePdfIntoFrame(src, column);
 }
 
+function costCallSource(call) {
+  if (call.from_cache) return { key: "cache", label: "Cache" };
+  if (call.skipped) return { key: "skipped", label: "Simulated" };
+  return { key: "live", label: "Live" };
+}
+
+function costCallAmount(call) {
+  const source = costCallSource(call);
+  if (source.key === "live") return `$${Number(call.total_cost_usd || 0).toFixed(4)}`;
+  return "$0.00";
+}
+
+function shortCostOperation(operation) {
+  const text = operation || "";
+  const paren = text.match(/\(([^)]+)\)/);
+  if (paren) return paren[1].replace(/([a-z])([A-Z])/g, "$1 $2");
+  return text;
+}
+
+function categorizeCostCalls(calls) {
+  const groups = {
+    llm: { label: "LLM agents", hint: "Anthropic reasoning and search", items: [] },
+    third_party: { label: "Third-party vendors", hint: "Middesk · Persona", items: [] },
+    documents: { label: "Document parsing", hint: "Structured extraction per file", items: [] },
+  };
+
+  for (const call of calls || []) {
+    const agent = (call.agent || "").toLowerCase();
+    const operation = (call.operation || "").toLowerCase();
+    if (agent === "doc_extractor" || operation.includes("document extraction")) {
+      groups.documents.items.push(call);
+    } else if (
+      agent === "middesk" ||
+      agent === "persona" ||
+      operation.includes("middesk") ||
+      operation.includes("persona")
+    ) {
+      groups.third_party.items.push(call);
+    } else {
+      groups.llm.items.push(call);
+    }
+  }
+
+  return Object.entries(groups).filter(([, group]) => group.items.length);
+}
+
+function summarizeCostGroup(items) {
+  const live = items.filter((c) => !c.from_cache && !c.skipped).length;
+  const skipped = items.filter((c) => c.skipped).length;
+  const cache = items.filter((c) => c.from_cache).length;
+  const total = items.reduce(
+    (sum, c) => sum + (c.skipped || c.from_cache ? 0 : Number(c.total_cost_usd || 0)),
+    0
+  );
+  return { live, skipped, cache, total };
+}
+
+function renderCostGroupItems(items) {
+  return items
+    .map((call) => {
+      const source = costCallSource(call);
+      const title = shortCostOperation(call.operation) || call.agent || "Step";
+      return `<li class="agent-cost-item">
+        <span class="agent-cost-item-name">${escapeHtml(title)}</span>
+        <span class="agent-cost-item-meta">
+          <span class="agent-cost-pill agent-cost-pill-${source.key}">${source.label}</span>
+          <span class="agent-cost-item-amount">${costCallAmount(call)}</span>
+        </span>
+      </li>`;
+    })
+    .join("");
+}
+
 function renderAgentCostBreakdown(cost) {
   const calls = cost?.calls || [];
-  const rows = calls
-    .map((c) => {
-      const source = c.from_cache ? "cache" : c.skipped ? "skipped" : "live";
-      const amount =
-        c.from_cache || c.skipped ? "$0.0000" : `$${Number(c.total_cost_usd || 0).toFixed(4)}`;
-      const agent = c.agent ? ` · ${c.agent}` : "";
-      return `<tr>
-        <td>${escapeHtml(c.operation || "—")}${escapeHtml(agent)}</td>
-        <td><span class="agent-cost-source agent-cost-source-${source}">${source}</span></td>
-        <td>${amount}</td>
-      </tr>`;
+  const groups = categorizeCostCalls(calls);
+  const totalUsd = Number(cost.total_cost_usd || 0).toFixed(4);
+  const liveCalls = cost.live_api_calls || 0;
+
+  const groupHtml = groups
+    .map(([key, group]) => {
+      const stats = summarizeCostGroup(group.items);
+      const openByDefault = key === "llm" ? " open" : "";
+      const countLabel = `${group.items.length} step${group.items.length === 1 ? "" : "s"}`;
+      const metaBits = [
+        stats.live ? `${stats.live} live` : "",
+        stats.cache ? `${stats.cache} cache` : "",
+        stats.skipped ? `${stats.skipped} simulated` : "",
+      ].filter(Boolean);
+      return `<details class="agent-cost-group"${openByDefault}>
+        <summary class="agent-cost-group-summary">
+          <span class="agent-cost-group-heading">
+            <span class="agent-cost-group-title">${escapeHtml(group.label)}</span>
+            <span class="agent-cost-group-hint">${escapeHtml(group.hint)}</span>
+          </span>
+          <span class="agent-cost-group-stats">
+            <span class="agent-cost-group-count">${countLabel}</span>
+            <span class="agent-cost-group-amount">$${stats.total.toFixed(4)}</span>
+          </span>
+        </summary>
+        <p class="agent-cost-group-meta">${escapeHtml(metaBits.join(" · ") || "No billable calls")}</p>
+        <ul class="agent-cost-list">${renderCostGroupItems(group.items)}</ul>
+      </details>`;
     })
     .join("");
 
-  const byAgent = cost?.by_agent_usd || {};
-  const agentRows = Object.entries(byAgent)
-    .filter(([, v]) => Number(v) > 0)
-    .map(
-      ([name, usd]) =>
-        `<li><span>${escapeHtml(name)}</span><span>$${Number(usd).toFixed(4)}</span></li>`
-    )
-    .join("");
-
   return `
-    <p class="agent-cost-popover-title">Agent cost breakdown</p>
-    <table class="agent-cost-table">
-      <thead><tr><th>Step</th><th>Source</th><th>Cost</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="3">No agent calls recorded</td></tr>'}</tbody>
-    </table>
-    ${
-      agentRows
-        ? `<ul class="agent-cost-by-agent">${agentRows}</ul>`
-        : ""
-    }
-    <p class="agent-cost-popover-total">
-      Total <strong>$${Number(cost.total_cost_usd || 0).toFixed(4)}</strong>
-      · ${cost.live_api_calls || 0} live
-      · ${(cost.total_input_tokens || 0).toLocaleString()} in /
-      ${(cost.total_output_tokens || 0).toLocaleString()} out tokens
-    </p>`;
+    <div class="agent-cost-dialog">
+      <header class="agent-cost-dialog-header">
+        <p class="agent-cost-dialog-title">Agent cost</p>
+        <p class="agent-cost-dialog-subtitle">${liveCalls} live call${liveCalls === 1 ? "" : "s"} · $${totalUsd} total</p>
+      </header>
+      <div class="agent-cost-dialog-body">
+        ${groupHtml || '<p class="agent-cost-empty">No agent calls recorded for this run.</p>'}
+      </div>
+      <footer class="agent-cost-dialog-footer">
+        <p class="agent-cost-tokens">${(cost.total_input_tokens || 0).toLocaleString()} in / ${(cost.total_output_tokens || 0).toLocaleString()} out tokens</p>
+        <details class="agent-cost-trust">
+          <summary>Should I trust this?</summary>
+          <p>Live Anthropic calls are metered from real token usage. Middesk and Persona are simulated in this demo (no vendor API charge). Cache hits reuse prior results at $0.</p>
+        </details>
+      </footer>
+    </div>`;
 }
 
 function renderAgentCostLink(cost) {
@@ -1300,28 +1424,49 @@ function renderAgentCostLink(cost) {
 
 function bindAgentCostPopover() {
   document.getElementById("agent-cost-popover-portal")?.remove();
+  document.getElementById("agent-cost-backdrop")?.remove();
 
   const trigger = document.getElementById("agent-cost-trigger");
   const popover = document.getElementById("agent-cost-popover");
   if (!trigger || !popover) return;
 
+  const backdrop = document.createElement("div");
+  backdrop.id = "agent-cost-backdrop";
+  backdrop.className = "agent-cost-backdrop";
+  backdrop.hidden = true;
+
   popover.id = "agent-cost-popover-portal";
   popover.classList.add("agent-cost-popover-portal");
+  document.body.appendChild(backdrop);
   document.body.appendChild(popover);
+
+  const prefersTouch = window.matchMedia("(hover: none), (pointer: coarse)").matches;
+  if (prefersTouch) {
+    popover.classList.add("agent-cost-sheet");
+  }
 
   let pinned = false;
   let hideTimer = null;
 
   const positionPopover = () => {
+    if (popover.classList.contains("agent-cost-sheet")) {
+      popover.style.left = "";
+      popover.style.top = "";
+      popover.style.right = "";
+      popover.style.bottom = "";
+      return;
+    }
     const rect = trigger.getBoundingClientRect();
-    const width = popover.offsetWidth || 280;
+    const width = popover.offsetWidth || 300;
     let left = rect.left;
-    let top = rect.bottom + 6;
+    let top = rect.bottom + 8;
     if (left + width > window.innerWidth - 12) {
       left = Math.max(12, window.innerWidth - width - 12);
     }
-    if (top + popover.offsetHeight > window.innerHeight - 12) {
-      top = Math.max(12, rect.top - popover.offsetHeight - 6);
+    const maxHeight = Math.min(window.innerHeight * 0.7, 420);
+    popover.style.maxHeight = `${maxHeight}px`;
+    if (top + maxHeight > window.innerHeight - 12) {
+      top = Math.max(12, rect.top - maxHeight - 8);
     }
     popover.style.left = `${left}px`;
     popover.style.top = `${top}px`;
@@ -1330,39 +1475,81 @@ function bindAgentCostPopover() {
   const show = () => {
     if (hideTimer) clearTimeout(hideTimer);
     positionPopover();
+    backdrop.hidden = false;
     popover.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
+    if (popover.classList.contains("agent-cost-sheet")) {
+      document.body.classList.add("agent-cost-open");
+    }
   };
 
   const hide = () => {
     if (pinned) return;
+    backdrop.hidden = true;
     popover.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("agent-cost-open");
   };
 
-  trigger.addEventListener("mouseenter", show);
-  trigger.addEventListener("mouseleave", () => {
-    hideTimer = setTimeout(hide, 160);
-  });
-  popover.addEventListener("mouseenter", show);
-  popover.addEventListener("mouseleave", () => {
-    hideTimer = setTimeout(hide, 160);
-  });
-  trigger.addEventListener("click", (e) => {
+  const togglePinned = (e) => {
     e.preventDefault();
     e.stopPropagation();
     pinned = !pinned;
     if (pinned) show();
     else hide();
-  });
-  document.addEventListener("click", (e) => {
-    if (trigger.contains(e.target) || popover.contains(e.target)) return;
+  };
+
+  trigger.addEventListener("click", togglePinned);
+
+  if (!prefersTouch) {
+    trigger.addEventListener("mouseenter", show);
+    trigger.addEventListener("mouseleave", () => {
+      hideTimer = setTimeout(hide, 180);
+    });
+    popover.addEventListener("mouseenter", show);
+    popover.addEventListener("mouseleave", () => {
+      hideTimer = setTimeout(hide, 180);
+    });
+  }
+
+  if (trigger._costAbort) trigger._costAbort.abort();
+  const costAbort = new AbortController();
+  trigger._costAbort = costAbort;
+
+  backdrop.addEventListener("click", () => {
     pinned = false;
     hide();
   });
-  window.addEventListener("resize", () => {
-    if (!popover.hidden) positionPopover();
-  });
+
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape" && !popover.hidden) {
+        pinned = false;
+        hide();
+      }
+    },
+    { signal: costAbort.signal }
+  );
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (popover.hidden) return;
+      if (trigger.contains(e.target) || popover.contains(e.target)) return;
+      pinned = false;
+      hide();
+    },
+    { signal: costAbort.signal }
+  );
+
+  window.addEventListener(
+    "resize",
+    () => {
+      if (!popover.hidden) positionPopover();
+    },
+    { signal: costAbort.signal }
+  );
 }
 
 function bindScorecardActions(data) {
