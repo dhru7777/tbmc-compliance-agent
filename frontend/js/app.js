@@ -1027,7 +1027,9 @@ function resetCertificatePanel() {
   networkAdmissionGranted = false;
   lastSubmitResult = null;
   certificatePdfBytes = null;
+  certificatePdfUrl = null;
   certificateRenderMode = "canvas";
+  certificateLoadToken += 1;
   revokeCertificateBlobUrl();
   document.getElementById("agent-cost-popover-portal")?.remove();
   document.getElementById("agent-cost-backdrop")?.remove();
@@ -1065,8 +1067,10 @@ const CERTIFICATE_TABS = [
 
 let certificateZoom = 1;
 let certificatePdfBytes = null;
+let certificatePdfUrl = null;
 let certificateBlobUrl = null;
 let certificateRenderMode = "canvas";
+let certificateLoadToken = 0;
 const CERT_ZOOM_MIN = 0.5;
 const CERT_ZOOM_MAX = 2.5;
 const CERT_ZOOM_STEP = 0.12;
@@ -1096,16 +1100,18 @@ function showCertificatePdfError(viewport, message) {
   viewport.appendChild(msg);
 }
 
-async function renderCertificatePdfCanvas(viewport, bytes) {
+async function renderCertificatePdfCanvas(viewport, bytes, token) {
   const pdfjsLib = getPdfJsLib();
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const pdf = await pdfjsLib.getDocument({ data }).promise;
+  if (token !== certificateLoadToken) return;
 
   viewport.innerHTML = '<div class="certificate-pdf-pages" id="certificate-pdf-pages"></div>';
   const pagesWrap = document.getElementById("certificate-pdf-pages");
   if (!pagesWrap) return;
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    if (token !== certificateLoadToken) return;
     const page = await pdf.getPage(pageNum);
     const vp = page.getViewport({ scale: CERT_PDF_BASE_SCALE * certificateZoom });
     const canvas = document.createElement("canvas");
@@ -1120,25 +1126,23 @@ async function renderCertificatePdfCanvas(viewport, bytes) {
   certificateRenderMode = "canvas";
 }
 
-function renderCertificatePdfEmbed(viewport, bytes) {
-  revokeCertificateBlobUrl();
-  const blob = new Blob([bytes], { type: "application/pdf" });
-  certificateBlobUrl = URL.createObjectURL(blob);
-  viewport.innerHTML =
-    '<embed class="certificate-pdf-embed" type="application/pdf" title="Verification certificate" />';
-  const embed = viewport.querySelector(".certificate-pdf-embed");
-  if (!embed) throw new Error("Could not create PDF embed");
-  embed.src = certificateBlobUrl;
-  embed.style.width = `${Math.round(certificateZoom * 100)}%`;
-  certificateRenderMode = "embed";
+function renderCertificatePdfIframe(viewport, pdfUrl) {
+  const cacheBust = `t=${Date.now()}`;
+  const src = pdfUrl.includes("?") ? `${pdfUrl}&${cacheBust}` : `${pdfUrl}?${cacheBust}`;
+  viewport.innerHTML = `<iframe class="certificate-pdf-iframe" title="Verification certificate" src="${escapeHtml(src)}"></iframe>`;
+  const frame = viewport.querySelector(".certificate-pdf-iframe");
+  if (frame) frame.style.zoom = String(certificateZoom);
+  certificateRenderMode = "iframe";
 }
 
-async function renderCertificatePdfPreview(viewport, bytes) {
+async function renderCertificatePdfPreview(viewport, bytes, token, pdfUrl) {
   try {
-    await renderCertificatePdfCanvas(viewport, bytes);
+    await renderCertificatePdfCanvas(viewport, bytes, token);
   } catch (canvasErr) {
-    console.warn("PDF.js canvas render failed, using embed fallback:", canvasErr);
-    renderCertificatePdfEmbed(viewport, bytes);
+    if (token !== certificateLoadToken) return;
+    console.warn("PDF.js canvas render failed, using direct iframe:", canvasErr);
+    if (pdfUrl) renderCertificatePdfIframe(viewport, pdfUrl);
+    else throw canvasErr;
   }
 }
 
@@ -1146,11 +1150,18 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
   const viewport = document.getElementById("certificate-viewport");
   if (!viewport) return;
 
+  const token = ++certificateLoadToken;
+  certificatePdfBytes = null;
+  certificatePdfUrl = pdfUrl;
+  revokeCertificateBlobUrl();
+  certificateRenderMode = "canvas";
+
   const finishLoading = () => column?.classList.remove("is-loading");
   viewport.innerHTML = '<p class="certificate-pdf-loading">Loading PDF…</p>';
 
   try {
     const res = await fetch(pdfUrl, { mode: "cors" });
+    if (token !== certificateLoadToken) return;
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try {
@@ -1162,6 +1173,7 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
       throw new Error(detail);
     }
     const buf = await res.arrayBuffer();
+    if (token !== certificateLoadToken) return;
     if (!buf.byteLength) {
       throw new Error("PDF response was empty");
     }
@@ -1170,17 +1182,24 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
       throw new Error("Server did not return a PDF");
     }
     certificatePdfBytes = buf;
-    await renderCertificatePdfPreview(viewport, buf);
+    await renderCertificatePdfPreview(viewport, buf, token, pdfUrl);
   } catch (err) {
+    if (token !== certificateLoadToken) return;
     certificatePdfBytes = null;
-    certificateRenderMode = "canvas";
-    revokeCertificateBlobUrl();
+    if (pdfUrl) {
+      try {
+        renderCertificatePdfIframe(viewport, pdfUrl);
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
     showCertificatePdfError(
       viewport,
       `Could not load PDF preview: ${err.message}. Try Open PDF or Download PDF.`
     );
   } finally {
-    finishLoading();
+    if (token === certificateLoadToken) finishLoading();
   }
 }
 
@@ -1189,17 +1208,26 @@ function setCertificateZoom(scale) {
   const label = document.getElementById("certificate-zoom-label");
   if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
   const viewport = document.getElementById("certificate-viewport");
-  if (!viewport || !certificatePdfBytes) return;
-  if (certificateRenderMode === "embed") {
-    const embed = viewport.querySelector(".certificate-pdf-embed");
-    if (embed) embed.style.width = `${Math.round(certificateZoom * 100)}%`;
+  if (!viewport) return;
+  if (certificateRenderMode === "iframe") {
+    const frame = viewport.querySelector(".certificate-pdf-iframe");
+    if (frame) frame.style.zoom = String(certificateZoom);
     return;
   }
-  renderCertificatePdfPreview(viewport, certificatePdfBytes);
+  if (!certificatePdfBytes) return;
+  const token = certificateLoadToken;
+  renderCertificatePdfPreview(viewport, certificatePdfBytes, token, certificatePdfUrl);
 }
 
 function bindCertificateZoomControls() {
   const viewport = document.getElementById("certificate-viewport");
+  if (!viewport || viewport.dataset.certZoomBound === "1") {
+    const label = document.getElementById("certificate-zoom-label");
+    if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
+    return;
+  }
+  viewport.dataset.certZoomBound = "1";
+
   document.getElementById("cert-zoom-out")?.addEventListener("click", () => {
     setCertificateZoom(certificateZoom - CERT_ZOOM_STEP);
   });
@@ -1209,7 +1237,7 @@ function bindCertificateZoomControls() {
   document.getElementById("cert-zoom-reset")?.addEventListener("click", () => {
     setCertificateZoom(1);
   });
-  viewport?.addEventListener(
+  viewport.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
@@ -1217,7 +1245,9 @@ function bindCertificateZoomControls() {
     },
     { passive: false }
   );
-  setCertificateZoom(certificateZoom);
+
+  const label = document.getElementById("certificate-zoom-label");
+  if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
 }
 
 function showCertificatePanel(data) {
@@ -1269,6 +1299,9 @@ function showCertificatePanel(data) {
     </div>`;
 
   certificateZoom = 1;
+  certificatePdfBytes = null;
+  certificatePdfUrl = null;
+  certificateLoadToken += 1;
   bindCertificateZoomControls();
 
   inner.querySelectorAll("[data-cert-tab]").forEach((btn) => {

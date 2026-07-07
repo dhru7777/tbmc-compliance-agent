@@ -1685,7 +1685,8 @@ body.landing-active .site-footer {
   background: #fff;
 }
 
-.certificate-pdf-embed {
+.certificate-pdf-embed,
+.certificate-pdf-iframe {
   display: block;
   width: 100%;
   min-height: 22rem;
@@ -1710,11 +1711,13 @@ body.landing-active .site-footer {
   }
 
   .certificate-pdf-page,
-  .certificate-pdf-embed {
+  .certificate-pdf-embed,
+  .certificate-pdf-iframe {
     min-height: 18rem;
   }
 
-  .certificate-pdf-embed {
+  .certificate-pdf-embed,
+  .certificate-pdf-iframe {
     height: 28rem;
   }
 
