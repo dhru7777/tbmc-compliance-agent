@@ -158,14 +158,42 @@ function renderAuditTrail(attempts) {
 
 let networkTabEnabled = false;
 
-const NETWORK_HUB = { id: "tbmc", label: "TBMC", sub: "Clearinghouse", x: 300, y: 235, r: 50 };
+const NETWORK_HUB = { id: "tbmc", label: "TBMC", sub: "Clearinghouse", r: 48 };
+const NETWORK_RING = { cx: 300, cy: 238, radius: 168 };
 const NETWORK_PEERS = [
-  { id: "issuer-atlas", label: "Atlas Stable Mint", sub: "Issuer", x: 115, y: 105, r: 36, kind: "issuer" },
-  { id: "issuer-harbor", label: "Harbor Reserve", sub: "Issuer", x: 485, y: 100, r: 36, kind: "issuer" },
-  { id: "biz-summit", label: "Summit Pay", sub: "Business", x: 95, y: 375, r: 34, kind: "business" },
-  { id: "biz-clearline", label: "Clearline Treasury", sub: "Business", x: 505, y: 365, r: 34, kind: "business" },
+  { id: "issuer-atlas", label: "Atlas Stable Mint", sub: "Issuer", r: 32, kind: "issuer" },
+  { id: "issuer-harbor", label: "Harbor Reserve", sub: "Issuer", r: 32, kind: "issuer" },
+  { id: "biz-clearline", label: "Clearline Treasury", sub: "Business", r: 30, kind: "business" },
+  { id: "biz-summit", label: "Summit Pay", sub: "Business", r: 30, kind: "business" },
 ];
-const NEW_MEMBER_ANCHOR = { x: 470, y: 255, r: 40 };
+const NEW_MEMBER_RING_INDEX = 2;
+
+function ringPosition(index, total, radius, cx, cy) {
+  const angle = -Math.PI / 2 + (2 * Math.PI * index) / total;
+  return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+}
+
+function layoutNetworkNodes(company) {
+  const hub = { ...NETWORK_HUB, ...NETWORK_RING, x: NETWORK_RING.cx, y: NETWORK_RING.cy };
+  const newMember = {
+    id: "new-member",
+    label: truncateLabel(company, 20),
+    sub: "New member",
+    kind: "new",
+    r: 36,
+  };
+  const members = [...NETWORK_PEERS];
+  members.splice(NEW_MEMBER_RING_INDEX, 0, newMember);
+
+  members.forEach((node, index) => {
+    const pos = ringPosition(index, members.length, NETWORK_RING.radius, NETWORK_RING.cx, NETWORK_RING.cy);
+    node.x = pos.x;
+    node.y = pos.y;
+    node.ringIndex = index;
+  });
+
+  return { hub, members, newMember };
+}
 
 function setNetworkTabEnabled(enabled) {
   networkTabEnabled = enabled;
@@ -196,18 +224,11 @@ function renderNetworkGraph(data) {
   const c4Id = data?.layered_credentials?.credentials?.C4?.credential_id;
   const shortC4 = c4Id ? `${c4Id.slice(0, 8)}…` : "";
 
+  const { hub, members, newMember } = layoutNetworkNodes(company);
+
   if (subtitle) {
-    subtitle.textContent = `${company} is now routed through TBMC to issuers and network businesses.`;
+    subtitle.textContent = `${company} has been admitted to the TBMC clearinghouse — connected to issuers, businesses, and settlement routes.`;
   }
-
-  const newMember = {
-    ...NEW_MEMBER_ANCHOR,
-    label: truncateLabel(company, 20),
-    sub: "New member",
-    kind: "new",
-  };
-
-  const allNodes = [NETWORK_HUB, ...NETWORK_PEERS, newMember];
 
   function linkPath(x1, y1, x2, y2, r1, r2) {
     const dx = x2 - x1;
@@ -222,14 +243,33 @@ function renderNetworkGraph(data) {
     return `M ${sx} ${sy} L ${ex} ${ey}`;
   }
 
-  const links = NETWORK_PEERS.map((peer) => {
-    const d = linkPath(NETWORK_HUB.x, NETWORK_HUB.y, peer.x, peer.y, NETWORK_HUB.r, peer.r);
+  function hubLink(peer, isNew) {
+    const d = linkPath(hub.x, hub.y, peer.x, peer.y, hub.r, peer.r);
+    if (isNew) {
+      return `<path class="link link-new" d="${d}"/><path class="link-new-flow" d="${d}"/>`;
+    }
     return `<path class="link" d="${d}"/><path class="link-flow" d="${d}"/>`;
-  }).join("");
+  }
 
-  const newD = linkPath(NETWORK_HUB.x, NETWORK_HUB.y, newMember.x, newMember.y, NETWORK_HUB.r, newMember.r);
-  const newLinks = `<path class="link link-new" d="${newD}"/><path class="link-new-flow" d="${newD}"/>`;
+  function ringTouchesNew(index, total) {
+    const prev = (index - 1 + total) % total;
+    const next = (index + 1) % total;
+    return index === newMember.ringIndex || prev === newMember.ringIndex || next === newMember.ringIndex;
+  }
 
+  const hubLinks = members.map((peer) => hubLink(peer, peer.id === newMember.id)).join("");
+
+  const ringLinks = members
+    .map((peer, index) => {
+      const next = members[(index + 1) % members.length];
+      const d = linkPath(peer.x, peer.y, next.x, next.y, peer.r, next.r);
+      const isNewSegment = ringTouchesNew(index, members.length);
+      const cls = isNewSegment ? "link link-ring link-ring-new" : "link link-ring";
+      return `<path class="${cls}" d="${d}"/>`;
+    })
+    .join("");
+
+  const allNodes = [hub, ...members];
   const nodes = allNodes
     .map((n) => {
       const cls = ["node", n.kind || (n.id === "tbmc" ? "hub" : "")].filter(Boolean).join(" ");
@@ -237,7 +277,8 @@ function renderNetworkGraph(data) {
       const lineOffset = ((lines.length - 1) * 6) / 2;
       const textY = n.y + (n.sub ? -2 : 4) + lineOffset;
       const subY = textY + 14 + (lines.length - 1) * 10;
-      return `<g class="${cls}">
+      const joinClass = n.id === newMember.id ? " node-joining" : "";
+      return `<g class="${cls}${joinClass}">
         <circle cx="${n.x}" cy="${n.y}" r="${n.r}"/>
         ${lines.map((line, i) => `<text x="${n.x}" y="${textY + i * 11}" class="node-label">${escapeHtml(line)}</text>`).join("")}
         ${n.sub ? `<text x="${n.x}" y="${subY}" class="node-type">${escapeHtml(n.sub)}</text>` : ""}
@@ -245,29 +286,26 @@ function renderNetworkGraph(data) {
     })
     .join("");
 
-  wrap.innerHTML = `<svg class="network-graph" viewBox="0 0 600 460" role="img" aria-label="Network graph with TBMC at center">
-    <defs>
-      <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-        <path d="M0,0 L6,3 L0,6 Z" fill="#C4A035"/>
-      </marker>
-    </defs>
-    ${links}
-    ${newLinks}
+  wrap.innerHTML = `<svg class="network-graph" viewBox="0 0 600 460" role="img" aria-label="TBMC clearinghouse network with connected members">
+    <circle class="network-ring-guide" cx="${NETWORK_RING.cx}" cy="${NETWORK_RING.cy}" r="${NETWORK_RING.radius}" />
+    ${ringLinks}
+    ${hubLinks}
     ${nodes}
   </svg>`;
 
   if (legend) {
     legend.innerHTML = `
-      <span class="network-legend-item"><span class="network-legend-swatch hub"></span> TBMC hub</span>
+      <span class="network-legend-item"><span class="network-legend-swatch hub"></span> TBMC clearinghouse</span>
       <span class="network-legend-item"><span class="network-legend-swatch new"></span> New member</span>
-      <span class="network-legend-item"><span class="network-legend-swatch issuer"></span> Issuer / Business</span>
-      <span class="network-legend-item">— dashed lines = USDC settlement routes</span>`;
+      <span class="network-legend-item"><span class="network-legend-swatch issuer"></span> Issuer</span>
+      <span class="network-legend-item"><span class="network-legend-swatch business"></span> Business</span>
+      <span class="network-legend-item">— gold = USDC via hub · ring = shared network</span>`;
   }
 
   if (note) {
     note.textContent = c4Id
-      ? `Settlement and proof-of-ownership flow through TBMC using master credential C4 (${shortC4}). Issuers and businesses verify independently via C1–C3.`
-      : `Settlement routes flow through TBMC. Complete verification to issue network credentials.`;
+      ? `${company} is on the clearinghouse ring with ${NETWORK_PEERS.length} existing members. Settlement and proof-of-ownership route through TBMC using master credential C4 (${shortC4}).`
+      : `Members connect on a shared clearinghouse ring. TBMC routes USDC settlement between issuers and businesses. Complete verification to admit a new node.`;
   }
 }
 

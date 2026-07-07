@@ -56,6 +56,20 @@ def _fmt_date(iso: str) -> str:
         return _ascii_safe(iso[:10])
 
 
+def _short_ref(text: str, *, head: int = 8, tail: int = 6) -> str:
+    text = _ascii_safe(text or "").strip()
+    if not text:
+        return "-"
+    if len(text) <= head + tail + 1:
+        return text
+    return f"{text[:head]}…{text[-tail:]}"
+
+
+def _chunk_text(text: str, chunk: int = 32) -> list[str]:
+    text = _ascii_safe(text or "").strip() or "-"
+    return [text[i : i + chunk] for i in range(0, len(text), chunk)] or ["-"]
+
+
 def _wrap_lines(text: str, max_len: int = 64) -> list[str]:
     text = _ascii_safe(text or "").strip()
     if not text:
@@ -143,10 +157,22 @@ class _PdfCanvas:
 
 class _Layout:
     def __init__(self, *, accent: tuple[float, float, float] = COLOR_GOLD) -> None:
-        self.c = _PdfCanvas()
-        self.y = PAGE_H - MARGIN - 44
         self.accent = accent
+        self.pages: list[_PdfCanvas] = []
+        self.c = _PdfCanvas()
+        self.pages.append(self.c)
+        self.y = PAGE_H - MARGIN - 44
         self._page_frame()
+
+    def new_page(self) -> None:
+        self.c = _PdfCanvas()
+        self.pages.append(self.c)
+        self.y = PAGE_H - MARGIN - 44
+        self._page_frame()
+
+    def ensure_space(self, needed: float) -> None:
+        if self.y < MARGIN + needed:
+            self.new_page()
 
     def _page_frame(self) -> None:
         self.c.fill_rect(0, 0, PAGE_W, PAGE_H, COLOR_BG)
@@ -184,12 +210,20 @@ class _Layout:
         self.y -= 18
 
     def field(self, label: str, value: str) -> None:
+        self.ensure_space(40)
         self.c.text(MARGIN, self.y, label.upper(), size=7, font="F1", rgb=COLOR_MUTED)
         self.y -= 12
         for line in _wrap_lines(value, 72):
             self.c.text(MARGIN, self.y, line, size=10, font="F2")
             self.y -= 13
         self.y -= 6
+
+    def field_ref(self, label: str, value: str, *, hint: str = "Full value in signed JSON credential") -> None:
+        full = _ascii_safe(value or "").strip()
+        self.field(label, _short_ref(full) if full else "-")
+        if full and len(full) > 18:
+            self.c.text(MARGIN, self.y, hint, size=7, font="F1", rgb=COLOR_MUTED)
+            self.y -= 12
 
     def bullet_list(self, items: list[str], *, max_items: int = 12) -> None:
         for item in items[:max_items]:
@@ -216,43 +250,85 @@ class _Layout:
             self.c.text(x + 26, self.y, label, size=9, font="F1")
         self.y -= row_h + 8
 
-    def footer_signature(self, *, cred_id: str, signing_key: str, signature: str, note: str) -> None:
-        foot_top = MARGIN + 88
-        self.c.stroke_line(MARGIN, foot_top, PAGE_W - MARGIN, foot_top, COLOR_BORDER, 0.75)
-        self.c.text(MARGIN, foot_top - 16, "Cryptographic reference", size=9, font="F2", rgb=COLOR_MUTED)
-        self.c.text(MARGIN, foot_top - 30, "Credential ID", size=7, font="F1", rgb=COLOR_MUTED)
-        y = foot_top - 42
-        for line in _wrap_lines(cred_id, 76):
-            self.c.text(MARGIN, y, line, size=8, font="F1")
-            y -= 10
-        self.c.text(MARGIN, y - 4, f"Signing key: {signing_key or '-'}", size=8, font="F1", rgb=COLOR_MUTED)
-        sig_y = foot_top - 30
-        self.c.text(PAGE_W / 2 + 8, sig_y, "Ed25519 signature", size=7, font="F1", rgb=COLOR_MUTED)
-        sig_y -= 12
-        for line in _wrap_lines(signature or "-", 56)[:4]:
-            self.c.text(PAGE_W / 2 + 8, sig_y, line, size=7, font="F1", rgb=COLOR_MUTED)
-            sig_y -= 10
+    def crypto_appendix(
+        self,
+        *,
+        cred_id: str,
+        signing_key: str,
+        signature: str,
+        note: str,
+        extra_fields: list[tuple[str, str]] | None = None,
+    ) -> None:
+        """Page 2 — full hashes and signatures, chunked for readability."""
+        self.new_page()
+        top = PAGE_H - MARGIN - 28
+        self.c.text(MARGIN, top, "Cryptographic verification", size=14, font="F2")
+        self.c.text(MARGIN, top - 16, "Machine-verifiable references (appendix)", size=8, font="F1", rgb=COLOR_MUTED)
+        self.y = top - 40
+        self.c.stroke_line(MARGIN, self.y, PAGE_W - MARGIN, self.y, COLOR_BORDER, 0.75)
+        self.y -= 22
+
+        def block(title: str, value: str, *, chunk: int = 36) -> None:
+            self.ensure_space(56)
+            self.c.text(MARGIN, self.y, title.upper(), size=7, font="F1", rgb=COLOR_MUTED)
+            self.y -= 12
+            for line in _chunk_text(value, chunk):
+                self.c.text(MARGIN + 6, self.y, line, size=9, font="F1")
+                self.y -= 11
+            self.y -= 8
+
+        block("Credential ID", cred_id, chunk=36)
+        if signing_key:
+            block("Signing key", signing_key, chunk=40)
+        if signature:
+            block("Ed25519 signature", signature, chunk=48)
+
+        for label, value in extra_fields or []:
+            if value:
+                block(label, value, chunk=32 if len(value) > 40 else 36)
+
         if note:
-            ny = MARGIN + 8
-            for line in _wrap_lines(note, 95):
-                self.c.text(MARGIN, ny, line, size=7, font="F1", rgb=COLOR_MUTED)
-                ny += 10
+            self.ensure_space(36)
+            self.y -= 4
+            self.c.stroke_line(MARGIN, self.y, PAGE_W - MARGIN, self.y, COLOR_BORDER, 0.75)
+            self.y -= 16
+            for line in _wrap_lines(note, 88):
+                self.c.text(MARGIN, self.y, line, size=8, font="F1", rgb=COLOR_MUTED)
+                self.y -= 11
+
+    def finish(self) -> bytes:
+        return _build_pdf_bytes(self.pages)
 
 
-def _build_pdf_bytes(canvas: _PdfCanvas) -> bytes:
-    stream = "\n".join(canvas.save()).encode("latin-1", errors="replace")
-    stream_len = len(stream)
-    objects: list[bytes] = [
-        b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n",
-        b"2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
-        (
-            b"3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>endobj\n"
-        ),
-        f"4 0 obj<< /Length {stream_len} >>stream\n".encode() + stream + b"\nendstream\nendobj\n",
-        b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
-        b"6 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>endobj\n",
-    ]
+def _build_pdf_bytes(pages: list[_PdfCanvas]) -> bytes:
+    page_count = len(pages)
+    objects: list[bytes] = []
+
+    font_f1_obj = 3 + page_count * 2 + 1
+    font_f2_obj = font_f1_obj + 1
+
+    page_obj_nums = list(range(3, 3 + page_count))
+    content_obj_nums = list(range(3 + page_count, 3 + page_count * 2))
+
+    page_kids = " ".join(f"{n} 0 R" for n in page_obj_nums)
+    objects.append(b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
+    objects.append(f"2 0 obj<< /Type /Pages /Kids [{page_kids}] /Count {page_count} >>endobj\n".encode())
+
+    for i, canvas in enumerate(pages):
+        page_num = page_obj_nums[i]
+        content_num = content_obj_nums[i]
+        objects.append(
+            (
+                f"{page_num} 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                f"/Contents {content_num} 0 R /Resources << /Font << /F1 {font_f1_obj} 0 R /F2 {font_f2_obj} 0 R >> >> >>endobj\n"
+            ).encode()
+        )
+        stream = "\n".join(canvas.save()).encode("latin-1", errors="replace")
+        objects.append(f"{content_num} 0 obj<< /Length {len(stream)} >>stream\n".encode() + stream + b"\nendstream\nendobj\n")
+
+    objects.append(f"{font_f1_obj} 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n".encode())
+    objects.append(f"{font_f2_obj} 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>endobj\n".encode())
+
     header = b"%PDF-1.4\n"
     body = b""
     offsets = [0]
@@ -317,17 +393,19 @@ def render_compliance_certificate_pdf(
 
     if master_credential_id:
         lay.section("Related client proof")
-        lay.field("Master verification credential (C4)", master_credential_id)
+        lay.field_ref("Master verification credential (C4)", master_credential_id)
         lay.c.text(MARGIN, lay.y, "Present C4 as x401 proof-of-ownership on the network.", size=8, font="F1", rgb=COLOR_MUTED)
         lay.y -= 20
 
-    lay.footer_signature(
+    lay.c.text(MARGIN, lay.y, "Full cryptographic references are on page 2.", size=8, font="F1", rgb=COLOR_MUTED)
+    lay.crypto_appendix(
         cred_id=credential.get("credential_id", ""),
         signing_key=credential.get("signing_key_id", ""),
         signature=credential.get("signature", ""),
         note="Verify using the signed JSON credential and the clearinghouse public key.",
+        extra_fields=[("Client master credential (C4)", master_credential_id or "")],
     )
-    return _build_pdf_bytes(lay.c)
+    return lay.finish()
 
 
 def render_kyc_credential_pdf(c1: dict, layered: dict | None = None) -> bytes:
@@ -346,7 +424,7 @@ def render_kyc_credential_pdf(c1: dict, layered: dict | None = None) -> bytes:
 
     lay.field("Issuance date", _fmt_date(c1.get("issuance_date", "")))
     lay.field("Expiry date", _fmt_date(c1.get("expiry_date", "")))
-    lay.field("Session ID", c1.get("session_id", ""))
+    lay.field_ref("Session ID", c1.get("session_id", ""))
 
     lay.section("Documents verified (KYC)")
     lay.c.text(MARGIN, lay.y, f"{len(docs)} document(s) — private identity records", size=8, font="F1", rgb=COLOR_MUTED)
@@ -359,13 +437,14 @@ def render_kyc_credential_pdf(c1: dict, layered: dict | None = None) -> bytes:
         lay.c.text(MARGIN, lay.y, f"{mark}: {item.get('item', '')}", size=9, font="F1")
         lay.y -= 13
 
-    lay.footer_signature(
+    lay.c.text(MARGIN, lay.y, "Full cryptographic references are on page 2.", size=8, font="F1", rgb=COLOR_MUTED)
+    lay.crypto_appendix(
         cred_id=c1.get("credential_id", ""),
         signing_key=c1.get("signing_key_id", ""),
         signature=c1.get("signature", ""),
         note="Independent KYC credential — verifiable separately from KYB or master proof.",
     )
-    return _build_pdf_bytes(lay.c)
+    return lay.finish()
 
 
 def render_kyb_credential_pdf(c2: dict, layered: dict | None = None) -> bytes:
@@ -387,7 +466,7 @@ def render_kyb_credential_pdf(c2: dict, layered: dict | None = None) -> bytes:
 
     lay.field("Issuance date", _fmt_date(c2.get("issuance_date", "")))
     lay.field("Expiry date", _fmt_date(c2.get("expiry_date", "")))
-    lay.field("Session ID", c2.get("session_id", ""))
+    lay.field_ref("Session ID", c2.get("session_id", ""))
 
     if summary:
         lay.section("Document summary")
@@ -411,17 +490,22 @@ def render_kyb_credential_pdf(c2: dict, layered: dict | None = None) -> bytes:
     if c3.get("credential_id") or c4.get("credential_id"):
         lay.section("Related credentials")
         if c3.get("credential_id"):
-            lay.field("Combined KYC+KYB (C3)", c3.get("credential_id", ""))
+            lay.field_ref("Combined KYC+KYB (C3)", c3.get("credential_id", ""))
         if c4.get("credential_id"):
-            lay.field("Master proof (C4)", c4.get("credential_id", ""))
+            lay.field_ref("Master proof (C4)", c4.get("credential_id", ""))
 
-    lay.footer_signature(
+    lay.c.text(MARGIN, lay.y, "Full cryptographic references are on page 2.", size=8, font="F1", rgb=COLOR_MUTED)
+    lay.crypto_appendix(
         cred_id=c2.get("credential_id", ""),
         signing_key=c2.get("signing_key_id", ""),
         signature=c2.get("signature", ""),
         note="Independent KYB credential — business entity proof for network transfer.",
+        extra_fields=[
+            ("Combined credential (C3)", c3.get("credential_id", "")),
+            ("Master credential (C4)", c4.get("credential_id", "")),
+        ],
     )
-    return _build_pdf_bytes(lay.c)
+    return lay.finish()
 
 
 def render_kya_credential_pdf(kya_proof: dict) -> bytes:
@@ -434,9 +518,9 @@ def render_kya_credential_pdf(kya_proof: dict) -> bytes:
     lay = _Layout(accent=(88 / 255, 55 / 255, 130 / 255))
     lay.header("KYA Agent Proof Credential", "Know Your Agent — verification auditability", badge="KYA")
 
-    lay.field("Agent ID", kya_proof.get("agent_id") or cred.get("agent_id", ""))
-    lay.field("Session ID", kya_proof.get("session_id") or cred.get("session_id", ""))
-    lay.field("Enterprise ID", kya_proof.get("enterprise_id") or cred.get("enterprise_id", ""))
+    lay.field_ref("Agent ID", kya_proof.get("agent_id") or cred.get("agent_id", ""))
+    lay.field_ref("Session ID", kya_proof.get("session_id") or cred.get("session_id", ""))
+    lay.field_ref("Enterprise ID", kya_proof.get("enterprise_id") or cred.get("enterprise_id", ""))
     lay.field("Issuance date", _fmt_date(cred.get("issuance_date", "")))
     lay.field("Expiry date", _fmt_date(cred.get("expiry_date", "")))
 
@@ -444,10 +528,11 @@ def render_kya_credential_pdf(kya_proof: dict) -> bytes:
     lay.field("KYB status", outcome.get("kyb_status", ""))
     lay.field("Confidence score", str(outcome.get("confidence_score", "")))
     if cred.get("client_master_credential_id"):
-        lay.field("Client master credential (C4)", cred.get("client_master_credential_id", ""))
+        lay.field_ref("Client master credential (C4)", cred.get("client_master_credential_id", ""))
 
     lay.section("Audit trail binding")
-    lay.field("audit.md SHA-256", kya_proof.get("audit_md_sha256") or cred.get("audit_md_sha256", ""))
+    audit_hash = kya_proof.get("audit_md_sha256") or cred.get("audit_md_sha256", "")
+    lay.field_ref("audit.md SHA-256", audit_hash, hint="Full hash on page 2")
     lay.c.text(MARGIN, lay.y, "Full audit record: session trail, LLM calls, and agent trace.", size=8, font="F1", rgb=COLOR_MUTED)
     lay.y -= 16
 
@@ -458,13 +543,18 @@ def render_kya_credential_pdf(kya_proof: dict) -> bytes:
     lay.field("Total cost (USD)", str(llm.get("total_cost_usd", 0)))
     lay.field("Agent trace steps", str(trace.get("step_count", 0)))
 
-    lay.footer_signature(
+    lay.c.text(MARGIN, lay.y, "Full cryptographic references are on page 2.", size=8, font="F1", rgb=COLOR_MUTED)
+    lay.crypto_appendix(
         cred_id=cred.get("credential_id", ""),
         signing_key=cred.get("signing_key_id", ""),
         signature=cred.get("signature", ""),
         note="KYA proof = agent_id + session_id + audit.md credential. Proof of agent ownership and verification.",
+        extra_fields=[
+            ("audit.md SHA-256", audit_hash),
+            ("Client master credential (C4)", cred.get("client_master_credential_id", "")),
+        ],
     )
-    return _build_pdf_bytes(lay.c)
+    return lay.finish()
 
 
 def render_certificate_pdf(

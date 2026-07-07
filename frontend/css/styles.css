@@ -2236,6 +2236,26 @@ body.landing-active .site-footer {
   stroke-width: 1.5;
 }
 
+.network-graph .link-ring {
+  stroke: rgba(148, 163, 184, 0.45);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 6;
+}
+
+.network-graph .link-ring-new {
+  stroke: var(--success);
+  stroke-width: 2;
+  opacity: 0.9;
+}
+
+.network-ring-guide {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 3 8;
+  pointer-events: none;
+}
+
 .network-graph .link-flow {
   fill: none;
   stroke: var(--accent-gold);
@@ -2279,14 +2299,44 @@ body.landing-active .site-footer {
   font-weight: 600;
 }
 
+.network-graph .node.issuer circle {
+  stroke: var(--accent-gold);
+}
+
+.network-graph .node.business circle {
+  stroke: #64748b;
+}
+
 .network-graph .node.new-member circle {
   fill: #ecfdf3;
   stroke: var(--success);
   stroke-width: 2.5;
 }
 
-.network-graph .node.issuer circle {
-  stroke: var(--accent-gold);
+.network-graph .node.node-joining {
+  animation: network-node-join 0.85s ease-out;
+}
+
+.network-graph .node.node-joining circle {
+  animation: network-node-pulse 0.85s ease-out;
+}
+
+@keyframes network-node-join {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes network-node-pulse {
+  from {
+    stroke-width: 1;
+  }
+  to {
+    stroke-width: 2.5;
+  }
 }
 
 .network-graph .node text {
@@ -2338,6 +2388,10 @@ body.landing-active .site-footer {
 
 .network-legend-swatch.issuer {
   border-color: var(--accent-gold);
+}
+
+.network-legend-swatch.business {
+  border-color: #64748b;
 }
 
 .network-panel-note {
