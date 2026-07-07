@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import uuid
@@ -13,8 +14,33 @@ TRIAL_DOC_MARKER = "KYB TRIAL DOCUMENT - NOT FOR PRODUCTION USE"
 MOCK_PACKAGE_MARKER = "[MOCK DOCUMENT —"
 MOCK_SLOT_MARKER = "DOCUMENT SLOT"
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MOCK_DOCS_DIR = REPO_ROOT / "agent-skill" / "mock documents"
+# Riverstone KYB text files live in agent-skill/mock documents (not a demo/ folder).
+AGENT_SKILL_MOCK_PARTS = ("agent-skill", "mock documents")
+
+
+def _resolve_mock_docs_dir() -> Path:
+    """Resolve agent-skill/mock documents for local dev and Docker."""
+    env = os.getenv("MOCK_DOCS_DIR", "").strip()
+    if env:
+        path = Path(env).expanduser().resolve()
+        if path.is_dir():
+            return path
+
+    here = Path(__file__).resolve()
+    backend_root = here.parents[2]
+    repo_root = here.parents[3]
+    candidates = [
+        repo_root.joinpath(*AGENT_SKILL_MOCK_PARTS),
+        Path("/").joinpath(*AGENT_SKILL_MOCK_PARTS),
+        backend_root.joinpath(*AGENT_SKILL_MOCK_PARTS),
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return repo_root.joinpath(*AGENT_SKILL_MOCK_PARTS)
+
+
+MOCK_DOCS_DIR = _resolve_mock_docs_dir()
 
 RIVERSTONE_MOCK_FILENAMES = [
     "9_RiverstoneHoldingsLLC_01_ArticlesOfIncorporation.txt",
@@ -465,7 +491,10 @@ def load_mock_bundle_documents(company_id: str) -> list[dict[str, str]]:
     for filename in filenames:
         path = MOCK_DOCS_DIR / filename
         if not path.is_file():
-            raise FileNotFoundError(f"Mock document missing: {filename}")
+            raise FileNotFoundError(
+                f"Mock document missing: {filename} "
+                f"(expected in agent-skill/mock documents at {MOCK_DOCS_DIR})"
+            )
         documents.append(
             {
                 "filename": filename,

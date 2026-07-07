@@ -1356,7 +1356,7 @@ async function loadDemoCompanyOptions() {
     if (statusEl) {
       if (staleBackend) {
         statusEl.textContent =
-          "API is on an old deploy — redeploy Railway from latest main. Riverstone is shown but document load may fail until the backend updates.";
+          "API is on an old deploy — redeploy Railway service tbmc-compliance-api (feisty-beauty) from latest main. Riverstone is shown but the 8-file bundle loads from agent-skill/mock documents on the server.";
         statusEl.classList.add("error");
       } else {
         statusEl.textContent =

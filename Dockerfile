@@ -7,8 +7,10 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
-# Riverstone trial package lives outside backend/ — required at /agent-skill/mock documents
+# Riverstone trial package: agent-skill/mock documents at repo root (not backend/demo/)
 COPY agent-skill/mock\ documents /agent-skill/mock\ documents
+
+ENV MOCK_DOCS_DIR="/agent-skill/mock documents"
 
 ARG GIT_COMMIT=dev
 RUN echo "${GIT_COMMIT}" > DEPLOY_SHA.txt
