@@ -7,7 +7,22 @@ from datetime import datetime, timezone
 
 from app.services import credential_store, demo_companies, kyb_rules, md_recorder, session_store, verify_service, x401_service
 from app.services.agents import kyb_coach, public_search
-from app.services.verification_store import save_verification_record
+from app.services.kya_credential import (
+    audit_content_digest,
+    build_audit_md,
+    issue_kya_credential,
+    load_kya_proof,
+    read_audit_md,
+    save_audit_md,
+    save_kya_proof,
+)
+from app.services.verification_credentials import (
+    issue_layered_credentials,
+    load_layered_credentials,
+    save_layered_credentials,
+    verify_layered_credentials,
+)
+from app.services.verification_store import save_verification_record, update_verification_credentials
 
 _sessions: dict[str, dict] = {}
 
@@ -540,13 +555,98 @@ async def submit_kyb(
         else "Public search skipped — documents satisfied requirements"
     )
 
-    verification_record = save_verification_record(
+    layered_bundle = None
+    if scorecard.get("kyb_status") == "passed":
+        layered_bundle = issue_layered_credentials(
+            session_id=session_id,
+            session=session,
+            scorecard=scorecard,
+        )
+        if layered_bundle:
+            save_layered_credentials(session_id, layered_bundle)
+            session["layered_credentials"] = layered_bundle
+            _persist(session)
+
+    enterprise_id = None
+    c4_id = None
+    if layered_bundle:
+        c4_id = (layered_bundle.get("credentials") or {}).get("C4", {}).get("credential_id")
+
+    audit_md = build_audit_md(
         session_id=session_id,
-        session=session,
-        scorecard=scorecard,
-        uploads=uploads,
         verify_result=verify_result,
+        scorecard=scorecard,
+        enterprise_id=enterprise_id,
+        client_master_credential_id=c4_id,
     )
+    save_audit_md(session_id, audit_md)
+    session["audit_md_sha256"] = audit_content_digest(audit_md)
+
+    kya_proof = None
+    if scorecard.get("kyb_status") == "passed":
+        kya_proof = issue_kya_credential(
+            session_id=session_id,
+            audit_md=audit_md,
+            verify_result=verify_result,
+            scorecard=scorecard,
+            enterprise_id=enterprise_id,
+            client_master_credential_id=c4_id,
+        )
+        if kya_proof:
+            save_kya_proof(session_id, kya_proof)
+            session["kya_proof"] = kya_proof
+            _persist(session)
+
+    verification_record = None
+
+    if layered_bundle and scorecard.get("kyb_status") == "passed":
+        verification_record = save_verification_record(
+            session_id=session_id,
+            session=session,
+            scorecard=scorecard,
+            uploads=uploads,
+            verify_result=verify_result,
+            layered_credentials=layered_bundle,
+            kya_proof=kya_proof,
+        )
+        enterprise_id = verification_record.get("enterprise_id") if verification_record else None
+        if enterprise_id:
+            for tier, cred in (layered_bundle.get("credentials") or {}).items():
+                cred["enterprise_id"] = enterprise_id
+            layered_bundle["enterprise_id"] = enterprise_id
+            save_layered_credentials(session_id, layered_bundle)
+            session["layered_credentials"] = layered_bundle
+            if kya_proof:
+                kya_proof["enterprise_id"] = enterprise_id
+                cred = kya_proof.get("credential") or {}
+                cred["enterprise_id"] = enterprise_id
+                save_kya_proof(session_id, kya_proof)
+                session["kya_proof"] = kya_proof
+            audit_md = build_audit_md(
+                session_id=session_id,
+                verify_result=verify_result,
+                scorecard=scorecard,
+                enterprise_id=enterprise_id,
+                client_master_credential_id=c4_id,
+            )
+            save_audit_md(session_id, audit_md)
+            session["audit_md_sha256"] = audit_content_digest(audit_md)
+            update_verification_credentials(
+                enterprise_id=enterprise_id,
+                layered_credentials=layered_bundle,
+                kya_proof=kya_proof,
+            )
+            _persist(session)
+    else:
+        verification_record = save_verification_record(
+            session_id=session_id,
+            session=session,
+            scorecard=scorecard,
+            uploads=uploads,
+            verify_result=verify_result,
+            layered_credentials=layered_bundle,
+            kya_proof=kya_proof,
+        )
 
     credential = None
     x401_status = "skipped"
@@ -560,8 +660,13 @@ async def submit_kyb(
             enterprise_id=enterprise_id,
         )
         if credential:
-            pdf_bytes = x401_service.render_certificate_pdf(credential)
-            credential_store.save_credential(session_id, credential, pdf_bytes)
+            pdfs = x401_service.render_all_certificate_pdfs(
+                credential,
+                layered_credentials=layered_bundle,
+                kya_proof=kya_proof,
+            )
+            credential_store.save_credential(session_id, credential, pdfs.get("compliance"))
+            credential_store.save_certificate_bundle(session_id, pdfs)
             x401_status = "issued"
             x401_message = "Signed x401 compliance credential issued"
             md_recorder.append_step(
@@ -583,6 +688,32 @@ async def submit_kyb(
                 f"- {search_note}",
                 f"- Flags: {scorecard.get('flags_count', 0)}, Blocks: {scorecard.get('blocks_count', 0)}",
                 "- x401 credential not issued (passed required)",
+            ],
+        )
+
+    if layered_bundle:
+        c4 = (layered_bundle.get("credentials") or {}).get("C4") or {}
+        md_recorder.append_step(
+            session_id,
+            "Layered verification credentials issued (C1–C4)",
+            [
+                f"- Master credential (C4): {c4.get('credential_id', '—')}",
+                f"- KYC credential (C1): {(layered_bundle.get('credentials') or {}).get('C1', {}).get('credential_id', '—')}",
+                f"- KYB credential (C2): {(layered_bundle.get('credentials') or {}).get('C2', {}).get('credential_id', '—')}",
+                f"- Combined (C3): {(layered_bundle.get('credentials') or {}).get('C3', {}).get('credential_id', '—')}",
+            ],
+        )
+
+    if kya_proof:
+        kya_cred = kya_proof.get("credential") or {}
+        md_recorder.append_step(
+            session_id,
+            "KYA agent proof credential issued",
+            [
+                f"- Agent ID: {kya_proof.get('agent_id', '—')}",
+                f"- KYA credential ID: {kya_cred.get('credential_id', '—')}",
+                f"- audit.md SHA-256: {kya_proof.get('audit_md_sha256', '—')}",
+                f"- LLM live calls: {(kya_cred.get('llm_calls') or {}).get('live_api_calls', 0)}",
             ],
         )
 
@@ -614,6 +745,19 @@ async def submit_kyb(
         "credential": credential,
         "credential_url": f"/api/enterprise/kyb/{session_id}/credential" if credential else None,
         "certificate_pdf_url": f"/api/enterprise/kyb/{session_id}/credential.pdf" if credential else None,
+        "certificate_urls": {
+            "compliance": f"/api/enterprise/kyb/{session_id}/credential.pdf",
+            "kyc": f"/api/enterprise/kyb/{session_id}/credentials/kyc.pdf",
+            "kyb": f"/api/enterprise/kyb/{session_id}/credentials/kyb.pdf",
+            "kya": f"/api/enterprise/kyb/{session_id}/credentials/kya.pdf",
+        } if credential else None,
+        "layered_credentials": layered_bundle,
+        "layered_credentials_url": (
+            f"/api/enterprise/kyb/{session_id}/verification-credentials" if layered_bundle else None
+        ),
+        "kya_proof": kya_proof,
+        "kya_credential_url": kya_proof.get("kya_credential_url") if kya_proof else None,
+        "audit_md_url": f"/api/enterprise/kyb/{session_id}/audit.md",
         "public_facts": session.get("public_facts"),
         "search_performed": verify_result.get("search_performed", False),
         "agent_trace": verify_result.get("agent_trace", []),
@@ -699,17 +843,41 @@ def get_credential(session_id: str) -> dict | None:
     return credential_store.load_credential(session_id)
 
 
-def get_certificate_pdf(session_id: str) -> bytes | None:
+def get_layered_credentials(session_id: str) -> dict | None:
+    session = _get_session(session_id)
+    if session.get("layered_credentials"):
+        return session["layered_credentials"]
+    return load_layered_credentials(session_id)
+
+
+def get_kya_proof(session_id: str) -> dict | None:
+    session = _get_session(session_id)
+    if session.get("kya_proof"):
+        return session["kya_proof"]
+    return load_kya_proof(session_id)
+
+
+def get_audit_md(session_id: str) -> str:
     _get_session(session_id)
-    pdf = credential_store.load_certificate_pdf(session_id)
+    return read_audit_md(session_id)
+
+
+def get_certificate_pdf(session_id: str, kind: str = "compliance") -> bytes | None:
+    _get_session(session_id)
+    pdf = credential_store.load_certificate_pdf(session_id, kind)
     if pdf:
         return pdf
+    if kind != "compliance":
+        return None
     cred = credential_store.load_credential(session_id)
     if not cred:
         return None
-    pdf = x401_service.render_certificate_pdf(cred)
-    credential_store.save_credential(session_id, cred, pdf)
-    return pdf
+    layered = load_layered_credentials(session_id)
+    kya = load_kya_proof(session_id)
+    pdfs = x401_service.render_all_certificate_pdfs(cred, layered_credentials=layered, kya_proof=kya)
+    credential_store.save_certificate_bundle(session_id, pdfs)
+    credential_store.save_credential(session_id, cred, pdfs.get("compliance"))
+    return pdfs.get("compliance")
 
 
 def get_record(session_id: str) -> str:

@@ -50,6 +50,8 @@ class KybVerification(Base):
     search_performed: Mapped[bool] = mapped_column(default=False)
     scorecard: Mapped[dict | None] = mapped_column(JSONB)
     public_facts: Mapped[dict | None] = mapped_column(JSONB)
+    layered_credentials: Mapped[dict | None] = mapped_column(JSONB)
+    kya_proof: Mapped[dict | None] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -77,5 +79,7 @@ class KybVerification(Base):
             "search_performed": self.search_performed,
             "scorecard": self.scorecard,
             "public_facts": self.public_facts,
+            "layered_credentials": self.layered_credentials,
+            "kya_proof": self.kya_proof,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

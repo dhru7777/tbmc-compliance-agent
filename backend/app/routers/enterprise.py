@@ -423,6 +423,69 @@ async def kyb_submit(
         raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
 
 
+@router.get("/document-catalog")
+def document_catalog():
+    """Canonical 10-document list with KYC/KYB and public/private classification."""
+    from app.services.verification_credentials import list_document_catalog
+
+    return {"documents": list_document_catalog()}
+
+
+@router.get("/kyb/{session_id}/audit.md")
+def kyb_audit_md(session_id: str):
+    """Agent audit record: session trail + LLM calls + agent trace."""
+    try:
+        content = kyb_service.get_audit_md(session_id)
+        if not content:
+            raise HTTPException(status_code=404, detail="Audit record not found")
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/kyb/{session_id}/kya-credential")
+def kyb_kya_credential(session_id: str):
+    """KYA proof = agent_id + session_id + audit.md-bound signed credential."""
+    try:
+        from app.services.kya_credential import verify_audit_binding, verify_kya_proof
+
+        proof = kyb_service.get_kya_proof(session_id)
+        if not proof:
+            raise HTTPException(status_code=404, detail="KYA credential not issued yet")
+        sig = verify_kya_proof(proof)
+        sig["audit_md_binding_valid"] = verify_audit_binding(session_id, proof)
+        return {
+            "session_id": session_id,
+            "kya_proof": proof,
+            "verification": sig,
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/kyb/{session_id}/verification-credentials")
+def kyb_verification_credentials(session_id: str):
+    """Layered C1–C4 signed credentials issued after verification pass."""
+    try:
+        from app.services.verification_credentials import verify_layered_credentials
+
+        bundle = kyb_service.get_layered_credentials(session_id)
+        if not bundle:
+            raise HTTPException(status_code=404, detail="Verification credentials not issued yet")
+        return {
+            "session_id": session_id,
+            "enterprise_id": bundle.get("enterprise_id"),
+            "layered_credentials": bundle,
+            "signature_valid": verify_layered_credentials(bundle),
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.get("/kyb/{session_id}/credential")
 def kyb_credential(session_id: str):
     try:
@@ -440,10 +503,38 @@ def kyb_credential(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+_CERT_FILENAMES = {
+    "compliance": "tbmc-compliance-certificate",
+    "kyc": "tbmc-kyc-credential",
+    "kyb": "tbmc-kyb-credential",
+    "kya": "tbmc-kya-agent-proof",
+}
+
+
+@router.get("/kyb/{session_id}/credentials/{kind}.pdf")
+def kyb_certificate_by_kind(session_id: str, kind: str):
+    if kind not in _CERT_FILENAMES:
+        raise HTTPException(status_code=404, detail="Unknown certificate type")
+    try:
+        pdf = kyb_service.get_certificate_pdf(session_id, kind)
+        if not pdf:
+            raise HTTPException(status_code=404, detail="Certificate not issued yet")
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{_CERT_FILENAMES[kind]}-{session_id[:8]}.pdf"',
+                "Cache-Control": "no-store",
+            },
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.get("/kyb/{session_id}/credential.pdf")
 def kyb_credential_pdf(session_id: str):
     try:
-        pdf = kyb_service.get_certificate_pdf(session_id)
+        pdf = kyb_service.get_certificate_pdf(session_id, "compliance")
         if not pdf:
             raise HTTPException(status_code=404, detail="Certificate not issued yet")
         return Response(

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=52" />
+  <link rel="stylesheet" href="css/styles.css?v=54" />
 </head>
 <body class="landing-active">
 
@@ -58,6 +58,7 @@
     <div class="wizard-steps" id="wizard-steps">
       <span class="wizard-step-dot active" data-step="1">1. Application</span>
       <span class="wizard-step-dot" data-step="2">2. Scorecard</span>
+      <span class="wizard-step-dot wizard-step-locked" data-step="3" title="Available after verification passes">3. Network</span>
     </div>
 
     <!-- Single-page application -->
@@ -69,7 +70,8 @@
             <div class="demo-company-row">
               <label for="demo-company-select">Trial company</label>
               <select id="demo-company-select">
-                <option value="">Select sample package…</option>
+                <option value="">Select trial package…</option>
+                <option value="riverstone-holdings">Riverstone Holdings LLC — complete package</option>
               </select>
               <p id="demo-company-hint" class="demo-company-hint hidden"></p>
               <p id="demo-company-status" class="demo-company-status hidden"></p>
@@ -196,6 +198,24 @@
         <button type="button" class="btn btn-secondary" id="kyb-download-md">View audit record (MD)</button>
       </div>
       <pre id="kyb-md-preview" class="hidden" style="margin-top:1rem;font-size:0.75rem;max-height:300px;overflow:auto;background:var(--bg-elevated);padding:1rem;border-radius:8px;"></pre>
+    </div>
+
+    <!-- Network admission visualization -->
+    <div class="wizard-panel" id="kyb-step-3">
+      <div class="network-panel">
+        <header class="network-panel-header">
+          <h2 class="network-panel-title">Clearinghouse network</h2>
+          <p class="network-panel-subtitle" id="network-panel-subtitle">
+            Verified members connect through TBMC to issuers and businesses.
+          </p>
+        </header>
+        <div class="network-graph-wrap" id="network-graph-wrap" aria-label="Network topology diagram"></div>
+        <div class="network-legend" id="network-legend"></div>
+        <p class="network-panel-note" id="network-panel-note"></p>
+      </div>
+      <div class="wizard-nav">
+        <button type="button" class="btn btn-secondary" id="kyb-step3-back">← Back to scorecard</button>
+      </div>
     </div>
   </section>
 

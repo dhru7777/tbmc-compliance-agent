@@ -156,6 +156,144 @@ function renderAuditTrail(attempts) {
   panel.classList.remove("hidden");
 }
 
+let networkTabEnabled = false;
+
+const NETWORK_HUB = { id: "tbmc", label: "TBMC", sub: "Clearinghouse", x: 300, y: 235, r: 50 };
+const NETWORK_PEERS = [
+  { id: "issuer-atlas", label: "Atlas Stable Mint", sub: "Issuer", x: 115, y: 105, r: 36, kind: "issuer" },
+  { id: "issuer-harbor", label: "Harbor Reserve", sub: "Issuer", x: 485, y: 100, r: 36, kind: "issuer" },
+  { id: "biz-summit", label: "Summit Pay", sub: "Business", x: 95, y: 375, r: 34, kind: "business" },
+  { id: "biz-clearline", label: "Clearline Treasury", sub: "Business", x: 505, y: 365, r: 34, kind: "business" },
+];
+const NEW_MEMBER_ANCHOR = { x: 470, y: 255, r: 40 };
+
+function setNetworkTabEnabled(enabled) {
+  networkTabEnabled = enabled;
+  const dot = document.querySelector('.wizard-step-dot[data-step="3"]');
+  if (!dot) return;
+  dot.classList.toggle("wizard-step-locked", !enabled);
+  dot.classList.toggle("network-ready", enabled);
+  dot.title = enabled ? "View clearinghouse network" : "Available after verification passes";
+}
+
+function truncateLabel(text, max = 22) {
+  const t = (text || "").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function renderNetworkGraph(data) {
+  const wrap = document.getElementById("network-graph-wrap");
+  const subtitle = document.getElementById("network-panel-subtitle");
+  const note = document.getElementById("network-panel-note");
+  const legend = document.getElementById("network-legend");
+  if (!wrap) return;
+
+  const company =
+    document.getElementById("kyb_legal_name")?.value?.trim() ||
+    data?.verification_record?.legal_name ||
+    "Verified business";
+  const c4Id = data?.layered_credentials?.credentials?.C4?.credential_id;
+  const shortC4 = c4Id ? `${c4Id.slice(0, 8)}…` : "";
+
+  if (subtitle) {
+    subtitle.textContent = `${company} is now routed through TBMC to issuers and network businesses.`;
+  }
+
+  const newMember = {
+    ...NEW_MEMBER_ANCHOR,
+    label: truncateLabel(company, 20),
+    sub: "New member",
+    kind: "new",
+  };
+
+  const allNodes = [NETWORK_HUB, ...NETWORK_PEERS, newMember];
+
+  function linkPath(x1, y1, x2, y2, r1, r2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const sx = x1 + ux * (r1 + 4);
+    const sy = y1 + uy * (r1 + 4);
+    const ex = x2 - ux * (r2 + 6);
+    const ey = y2 - uy * (r2 + 6);
+    return `M ${sx} ${sy} L ${ex} ${ey}`;
+  }
+
+  const links = NETWORK_PEERS.map((peer) => {
+    const d = linkPath(NETWORK_HUB.x, NETWORK_HUB.y, peer.x, peer.y, NETWORK_HUB.r, peer.r);
+    return `<path class="link" d="${d}"/><path class="link-flow" d="${d}"/>`;
+  }).join("");
+
+  const newD = linkPath(NETWORK_HUB.x, NETWORK_HUB.y, newMember.x, newMember.y, NETWORK_HUB.r, newMember.r);
+  const newLinks = `<path class="link link-new" d="${newD}"/><path class="link-new-flow" d="${newD}"/>`;
+
+  const nodes = allNodes
+    .map((n) => {
+      const cls = ["node", n.kind || (n.id === "tbmc" ? "hub" : "")].filter(Boolean).join(" ");
+      const lines = _wrapSvgLabel(n.label, 14);
+      const lineOffset = ((lines.length - 1) * 6) / 2;
+      const textY = n.y + (n.sub ? -2 : 4) + lineOffset;
+      const subY = textY + 14 + (lines.length - 1) * 10;
+      return `<g class="${cls}">
+        <circle cx="${n.x}" cy="${n.y}" r="${n.r}"/>
+        ${lines.map((line, i) => `<text x="${n.x}" y="${textY + i * 11}" class="node-label">${escapeHtml(line)}</text>`).join("")}
+        ${n.sub ? `<text x="${n.x}" y="${subY}" class="node-type">${escapeHtml(n.sub)}</text>` : ""}
+      </g>`;
+    })
+    .join("");
+
+  wrap.innerHTML = `<svg class="network-graph" viewBox="0 0 600 460" role="img" aria-label="Network graph with TBMC at center">
+    <defs>
+      <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#C4A035"/>
+      </marker>
+    </defs>
+    ${links}
+    ${newLinks}
+    ${nodes}
+  </svg>`;
+
+  if (legend) {
+    legend.innerHTML = `
+      <span class="network-legend-item"><span class="network-legend-swatch hub"></span> TBMC hub</span>
+      <span class="network-legend-item"><span class="network-legend-swatch new"></span> New member</span>
+      <span class="network-legend-item"><span class="network-legend-swatch issuer"></span> Issuer / Business</span>
+      <span class="network-legend-item">— dashed lines = USDC settlement routes</span>`;
+  }
+
+  if (note) {
+    note.textContent = c4Id
+      ? `Settlement and proof-of-ownership flow through TBMC using master credential C4 (${shortC4}). Issuers and businesses verify independently via C1–C3.`
+      : `Settlement routes flow through TBMC. Complete verification to issue network credentials.`;
+  }
+}
+
+function _wrapSvgLabel(text, maxLen) {
+  const words = (text || "").split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (next.length > maxLen && line) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : ["—"];
+}
+
+function openNetworkTab(data) {
+  if (!networkTabEnabled) return;
+  renderNetworkGraph(data || lastSubmitResult);
+  transitionWizardStep(3);
+}
+
 function updateWizardDots(n) {
   document.querySelectorAll(".wizard-step-dot").forEach((d) => {
     const step = parseInt(d.dataset.step, 10);
@@ -760,12 +898,64 @@ function resetCertificatePanel() {
   if (inner) inner.innerHTML = "";
 }
 
-function getCertificatePdfUrl(data) {
+function getCertificatePdfUrl(data, kind = "compliance") {
   if (!data && !kybSessionId) return null;
+  const urls = data?.certificate_urls;
   const path =
-    data?.certificate_pdf_url ||
-    (kybSessionId ? `/api/enterprise/kyb/${kybSessionId}/credential.pdf` : null);
+    (urls && urls[kind]) ||
+    (kind === "compliance" ? data?.certificate_pdf_url : null) ||
+    (kybSessionId && kind === "compliance"
+      ? `/api/enterprise/kyb/${kybSessionId}/credential.pdf`
+      : kybSessionId
+        ? `/api/enterprise/kyb/${kybSessionId}/credentials/${kind}.pdf`
+        : null);
   return path ? `${API_BASE}${path}` : null;
+}
+
+const CERTIFICATE_TABS = [
+  { id: "compliance", label: "Compliance" },
+  { id: "kyc", label: "KYC (C1)" },
+  { id: "kyb", label: "KYB (C2)" },
+  { id: "kya", label: "KYA Agent" },
+];
+
+let certificateZoom = 1;
+const CERT_ZOOM_MIN = 0.5;
+const CERT_ZOOM_MAX = 2.5;
+const CERT_ZOOM_STEP = 0.12;
+const CERT_FRAME_BASE_HEIGHT = 720;
+
+function setCertificateZoom(scale) {
+  certificateZoom = Math.min(CERT_ZOOM_MAX, Math.max(CERT_ZOOM_MIN, Math.round(scale * 100) / 100));
+  const inner = document.getElementById("certificate-zoom-inner");
+  const label = document.getElementById("certificate-zoom-label");
+  if (inner) {
+    inner.style.transform = `scale(${certificateZoom})`;
+    inner.style.marginBottom = `${CERT_FRAME_BASE_HEIGHT * (certificateZoom - 1)}px`;
+  }
+  if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
+}
+
+function bindCertificateZoomControls() {
+  const viewport = document.getElementById("certificate-viewport");
+  document.getElementById("cert-zoom-out")?.addEventListener("click", () => {
+    setCertificateZoom(certificateZoom - CERT_ZOOM_STEP);
+  });
+  document.getElementById("cert-zoom-in")?.addEventListener("click", () => {
+    setCertificateZoom(certificateZoom + CERT_ZOOM_STEP);
+  });
+  document.getElementById("cert-zoom-reset")?.addEventListener("click", () => {
+    setCertificateZoom(1);
+  });
+  viewport?.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      setCertificateZoom(certificateZoom + (e.deltaY < 0 ? CERT_ZOOM_STEP : -CERT_ZOOM_STEP));
+    },
+    { passive: false }
+  );
+  setCertificateZoom(certificateZoom);
 }
 
 function showCertificatePanel(data) {
@@ -775,7 +965,8 @@ function showCertificatePanel(data) {
   if (!inner || !column) return;
 
   const payload = data || lastSubmitResult;
-  const pdfUrl = getCertificatePdfUrl(payload);
+  const activeTab = payload?._certTab || "compliance";
+  const pdfUrl = getCertificatePdfUrl(payload, activeTab);
 
   if (!pdfUrl) {
     alert("Certificate not available. Complete verification with a passing score first.");
@@ -789,16 +980,45 @@ function showCertificatePanel(data) {
   const cacheBust = `t=${Date.now()}`;
   const src = pdfUrl.includes("?") ? `${pdfUrl}&${cacheBust}` : `${pdfUrl}?${cacheBust}`;
 
+  const tabsHtml = CERTIFICATE_TABS.map(
+    (t) =>
+      `<button type="button" class="certificate-tab${t.id === activeTab ? " is-active" : ""}" data-cert-tab="${t.id}">${escapeHtml(t.label)}</button>`
+  ).join("");
+
   inner.innerHTML = `
     <div class="certificate-column-header">
-      <h3 class="certificate-column-title">Compliance certificate</h3>
-      <p class="certificate-column-meta">Signed by the TBMC clearinghouse compliance agent</p>
+      <h3 class="certificate-column-title">Verification documents</h3>
+      <p class="certificate-column-meta">Separate PDFs for compliance, KYC, KYB, and agent audit proof</p>
+      <div class="certificate-tabs" role="tablist">${tabsHtml}</div>
     </div>
-    <iframe class="certificate-frame" id="certificate-frame" src="${escapeHtml(src)}" title="Compliance certificate"></iframe>
+    <div class="certificate-zoom-toolbar" aria-label="PDF zoom controls">
+      <button type="button" class="btn btn-secondary btn-sm" id="cert-zoom-out" title="Zoom out">−</button>
+      <span class="certificate-zoom-label" id="certificate-zoom-label">100%</span>
+      <button type="button" class="btn btn-secondary btn-sm" id="cert-zoom-in" title="Zoom in">+</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="cert-zoom-reset" title="Reset zoom">Fit</button>
+      <span class="certificate-zoom-hint">Scroll or use +/− to zoom</span>
+    </div>
+    <div class="certificate-viewport" id="certificate-viewport">
+      <div class="certificate-zoom-inner" id="certificate-zoom-inner">
+        <iframe class="certificate-frame" id="certificate-frame" src="${escapeHtml(src)}" title="Verification certificate"></iframe>
+      </div>
+    </div>
     <div class="certificate-column-actions">
-      <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-compliance-certificate.pdf">Download PDF</a>
+      <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-${activeTab}-certificate.pdf">Download PDF</a>
       <a class="btn btn-secondary certificate-open" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open PDF</a>
     </div>`;
+
+  certificateZoom = 1;
+  bindCertificateZoomControls();
+
+  inner.querySelectorAll("[data-cert-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-cert-tab");
+      if (payload) payload._certTab = tab;
+      if (lastSubmitResult) lastSubmitResult._certTab = tab;
+      showCertificatePanel(payload);
+    });
+  });
 
   const frame = document.getElementById("certificate-frame");
   if (frame) {
@@ -808,6 +1028,9 @@ function showCertificatePanel(data) {
 
 function bindScorecardActions(data) {
   const genBtn = document.getElementById("kyb-generate-cert");
+  const networkBtn = document.getElementById("kyb-view-network");
+
+  networkBtn?.addEventListener("click", () => openNetworkTab(data));
 
   genBtn?.addEventListener("click", () => {
     if (networkAdmissionGranted) {
@@ -921,8 +1144,9 @@ function renderScorecard(data) {
             <p class="admission-panel-meta">Confidence score: ${escapeHtml(confidenceLabel)}</p>
             <div class="admission-actions">
               <button type="button" class="btn btn-primary" id="kyb-generate-cert">Generate certificate</button>
+              <button type="button" class="btn btn-secondary" id="kyb-view-network">View network</button>
             </div>
-            <p class="admission-panel-hint">Generates your signed compliance certificate and previews the PDF on the right.</p>
+            <p class="admission-panel-hint">Opens separate PDFs for compliance admission, KYC, KYB, and KYA agent proof.</p>
           </div>`
         : ""
     }
@@ -1063,6 +1287,12 @@ function setLoadingMessage(text) {
   if (el) el.textContent = text;
 }
 
+const RIVERSTONE_TRIAL = {
+  id: "riverstone-holdings",
+  label: "Riverstone Holdings LLC — complete package",
+  hint: "Loads all 8 KYB documents (formation, EIN, ownership, address, purpose, and ID).",
+};
+
 async function loadDemoCompanyOptions() {
   const select = document.getElementById("demo-company-select");
   const statusEl = document.getElementById("demo-company-status");
@@ -1073,20 +1303,33 @@ async function loadDemoCompanyOptions() {
   }
   try {
     const data = await apiJson("/api/enterprise/demo-companies", null, "GET", 10000);
-    const companies = data.companies || [];
-    if (!companies.length) throw new Error("No trial packages returned");
+    const fromApi = data.companies || [];
+    const riverstone = fromApi.find((c) => c.id === RIVERSTONE_TRIAL.id);
+    const staleBackend = fromApi.length > 0 && !riverstone;
+
+    const companies = riverstone ? [riverstone] : [RIVERSTONE_TRIAL];
+
     select.innerHTML =
-      '<option value="">Select sample package…</option>' +
+      '<option value="">Select trial package…</option>' +
       companies
         .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`)
         .join("");
+
     if (statusEl) {
-      statusEl.textContent =
-        "Select Riverstone Holdings to load all 8 KYB documents, or upload your own files.";
+      if (staleBackend) {
+        statusEl.textContent =
+          "API is on an old deploy — redeploy Railway from latest main. Riverstone is shown but document load may fail until the backend updates.";
+        statusEl.classList.add("error");
+      } else {
+        statusEl.textContent =
+          "Select Riverstone Holdings to load all 8 KYB documents, or upload your own files.";
+      }
       statusEl.classList.remove("hidden");
     }
   } catch (err) {
-    select.innerHTML = '<option value="">Trial packages unavailable</option>';
+    select.innerHTML =
+      `<option value="">Select trial package…</option>` +
+      `<option value="${escapeHtml(RIVERSTONE_TRIAL.id)}">${escapeHtml(RIVERSTONE_TRIAL.label)}</option>`;
     if (statusEl) {
       statusEl.textContent =
         err.message?.includes("Cannot reach API")
@@ -1213,6 +1456,7 @@ async function initKybSession() {
   kybSessionId = null;
   serverHasDocuments = false;
   resetCertificatePanel();
+  setNetworkTabEnabled(false);
   owners.length = 0;
   controlPersons.length = 0;
   pendingDocs.length = 0;
@@ -1284,13 +1528,22 @@ document.addEventListener("DOMContentLoaded", () => {
       const target = parseInt(dot.dataset.step, 10);
       const current = document.querySelector(".wizard-step-dot.active");
       const currentStep = current ? parseInt(current.dataset.step, 10) : 1;
-      if (target >= currentStep) return;
+      if (target === 3) {
+        if (!networkTabEnabled) return;
+        openNetworkTab(lastSubmitResult);
+        return;
+      }
+      if (target > currentStep) return;
       setWizardStep(target);
       if (target === 1) {
         renderVerifyChecklist(checklistTemplate);
         document.getElementById("verify-panel")?.setAttribute("open", "");
       }
     });
+  });
+
+  document.getElementById("kyb-step3-back")?.addEventListener("click", () => {
+    setWizardStep(2);
   });
 
   document.getElementById("add-owner-btn").addEventListener("click", () => {
@@ -1437,6 +1690,7 @@ document.addEventListener("DOMContentLoaded", () => {
       syncChecklistFromScorecard(data.scorecard?.items);
       document.getElementById("kyb-scorecard").innerHTML = renderScorecard(data);
       bindScorecardActions(data);
+      setNetworkTabEnabled(data.scorecard?.kyb_status === "passed");
       await sleep(500);
       await transitionWizardStep(2);
     } catch (err) {

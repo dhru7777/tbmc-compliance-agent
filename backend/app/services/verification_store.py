@@ -42,6 +42,8 @@ def save_verification_record(
     scorecard: dict,
     uploads: list[tuple[str, str, bytes]],
     verify_result: dict,
+    layered_credentials: dict | None = None,
+    kya_proof: dict | None = None,
 ) -> dict | None:
     """
     Insert verification row. Returns serialized record or None if DB disabled/failed.
@@ -78,6 +80,8 @@ def save_verification_record(
         search_performed=bool(verify_result.get("search_performed")),
         scorecard=scorecard,
         public_facts=session.get("public_facts"),
+        layered_credentials=layered_credentials,
+        kya_proof=kya_proof,
     )
 
     try:
@@ -88,6 +92,35 @@ def save_verification_record(
     except Exception as exc:
         logger.exception("Failed to save KYB verification to Postgres: %s", exc)
         return None
+
+
+def update_verification_credentials(
+    *,
+    enterprise_id: str,
+    layered_credentials: dict | None = None,
+    kya_proof: dict | None = None,
+) -> bool:
+    """Patch credential JSONB after enterprise_id is assigned to signed bundles."""
+    if not is_db_enabled():
+        return False
+    try:
+        eid = uuid.UUID(enterprise_id)
+    except ValueError:
+        return False
+    try:
+        with get_db() as db:
+            row = db.get(KybVerification, eid)
+            if not row:
+                return False
+            if layered_credentials is not None:
+                row.layered_credentials = layered_credentials
+            if kya_proof is not None:
+                row.kya_proof = kya_proof
+            db.flush()
+            return True
+    except Exception as exc:
+        logger.exception("Failed to update verification credentials %s: %s", enterprise_id, exc)
+        return False
 
 
 def get_verification_by_id(enterprise_id: str) -> dict | None:

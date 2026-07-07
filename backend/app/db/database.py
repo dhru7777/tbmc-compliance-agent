@@ -61,6 +61,7 @@ def init_db() -> bool:
         if engine is None:
             return False
         Base.metadata.create_all(bind=engine)
+        _migrate_verification_columns(engine)
         return ping_db()
     except Exception as exc:
         print(
@@ -83,6 +84,20 @@ def ping_db() -> bool:
         return True
     except Exception:
         return False
+
+
+def _migrate_verification_columns(engine: Engine) -> None:
+    """Add JSONB credential columns to existing deployments (create_all is non-destructive)."""
+    statements = [
+        "ALTER TABLE kyb_verifications ADD COLUMN IF NOT EXISTS layered_credentials JSONB",
+        "ALTER TABLE kyb_verifications ADD COLUMN IF NOT EXISTS kya_proof JSONB",
+    ]
+    try:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+    except Exception as exc:
+        print(f"WARNING: credential column migration skipped: {exc}")
 
 
 @contextmanager
