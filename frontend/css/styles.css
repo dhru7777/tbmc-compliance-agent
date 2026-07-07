@@ -1995,12 +1995,6 @@ body.landing-active .site-footer {
   color: var(--text-muted);
 }
 
-.scorecard-meta {
-  margin: 0.2rem 0 0;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
 .agent-cost-wrap {
   position: relative;
   display: inline-block;
