@@ -6,3 +6,6 @@
 [build.environment]
   NODE_VERSION = "20"
   API_BASE = "https://tbmc-compliance-api-production.up.railway.app"
+  # API_BASE is a public Railway URL written into js/config.js on purpose.
+  SECRETS_SCAN_OMIT_KEYS = "API_BASE"
+  SECRETS_SCAN_OMIT_PATHS = "js/config.js"
