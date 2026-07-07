@@ -1389,7 +1389,7 @@ body.landing-active .site-footer {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
 }
 
-.certificate-column.is-loading .certificate-frame {
+.certificate-column.is-loading .certificate-pdf-embed {
   opacity: 0.45;
 }
 
@@ -1656,12 +1656,7 @@ body.landing-active .site-footer {
   line-height: 1.5;
 }
 
-.certificate-zoom-inner {
-  transform-origin: top center;
-  width: 100%;
-}
-
-.certificate-frame {
+.certificate-pdf-embed {
   width: 100%;
   height: 720px;
   min-height: 22rem;
@@ -1685,7 +1680,7 @@ body.landing-active .site-footer {
     min-height: 20rem;
   }
 
-  .certificate-frame {
+  .certificate-pdf-embed {
     height: 28rem;
   }
 
@@ -1998,6 +1993,114 @@ body.landing-active .site-footer {
   margin: 0.2rem 0 0;
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.scorecard-meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.agent-cost-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.agent-cost-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.agent-cost-link:hover,
+.agent-cost-link:focus-visible {
+  color: var(--accent-gold);
+}
+
+.agent-cost-popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: min(22rem, 80vw);
+  padding: 0.75rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  text-align: left;
+}
+
+.agent-cost-popover[hidden] {
+  display: none;
+}
+
+.agent-cost-popover-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.6875rem;
+}
+
+.agent-cost-table th,
+.agent-cost-table td {
+  padding: 0.25rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.agent-cost-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.agent-cost-source {
+  text-transform: capitalize;
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.agent-cost-source-live {
+  color: var(--accent);
+}
+
+.agent-cost-source-cache,
+.agent-cost-source-skipped {
+  color: var(--text-muted);
+}
+
+.agent-cost-by-agent {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.6875rem;
+}
+
+.agent-cost-by-agent li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+.agent-cost-popover-total {
+  margin: 0.5rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  line-height: 1.45;
 }
 
 .scorecard-result {

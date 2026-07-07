@@ -972,10 +972,10 @@ function revokeCertificateBlobUrl() {
 }
 
 async function loadCertificatePdfIntoFrame(pdfUrl, column) {
-  const frame = document.getElementById("certificate-frame");
+  const embed = document.getElementById("certificate-pdf");
   const viewport = document.getElementById("certificate-viewport");
   document.getElementById("certificate-pdf-error")?.remove();
-  if (!frame) return;
+  if (!embed) return;
 
   try {
     const res = await fetch(pdfUrl, { mode: "cors" });
@@ -999,9 +999,12 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
     }
     revokeCertificateBlobUrl();
     certificateBlobUrl = URL.createObjectURL(blob);
-    frame.src = certificateBlobUrl;
+    embed.removeAttribute("hidden");
+    embed.src = certificateBlobUrl;
+    setCertificateZoom(certificateZoom);
   } catch (err) {
-    frame.removeAttribute("src");
+    embed.removeAttribute("src");
+    embed.setAttribute("hidden", "");
     if (viewport) {
       const msg = document.createElement("p");
       msg.id = "certificate-pdf-error";
@@ -1016,11 +1019,11 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
 
 function setCertificateZoom(scale) {
   certificateZoom = Math.min(CERT_ZOOM_MAX, Math.max(CERT_ZOOM_MIN, Math.round(scale * 100) / 100));
-  const inner = document.getElementById("certificate-zoom-inner");
+  const embed = document.getElementById("certificate-pdf");
   const label = document.getElementById("certificate-zoom-label");
-  if (inner) {
-    inner.style.transform = `scale(${certificateZoom})`;
-    inner.style.marginBottom = `${CERT_FRAME_BASE_HEIGHT * (certificateZoom - 1)}px`;
+  if (embed) {
+    // Do not use transform:scale on PDF containers — it breaks Chrome's PDF renderer.
+    embed.style.zoom = String(certificateZoom);
   }
   if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
 }
@@ -1088,9 +1091,7 @@ function showCertificatePanel(data) {
       <span class="certificate-zoom-hint">Scroll or use +/− to zoom</span>
     </div>
     <div class="certificate-viewport" id="certificate-viewport">
-      <div class="certificate-zoom-inner" id="certificate-zoom-inner">
-        <iframe class="certificate-frame" id="certificate-frame" title="Verification certificate"></iframe>
-      </div>
+      <embed class="certificate-pdf-embed" id="certificate-pdf" type="application/pdf" title="Verification certificate" hidden />
     </div>
     <div class="certificate-column-actions">
       <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-${activeTab}-certificate.pdf">Download PDF</a>
@@ -1112,11 +1113,113 @@ function showCertificatePanel(data) {
   loadCertificatePdfIntoFrame(src, column);
 }
 
+function renderAgentCostBreakdown(cost) {
+  const calls = cost?.calls || [];
+  const rows = calls
+    .map((c) => {
+      const source = c.from_cache ? "cache" : c.skipped ? "skipped" : "live";
+      const amount =
+        c.from_cache || c.skipped ? "$0.0000" : `$${Number(c.total_cost_usd || 0).toFixed(4)}`;
+      const agent = c.agent ? ` · ${c.agent}` : "";
+      return `<tr>
+        <td>${escapeHtml(c.operation || "—")}${escapeHtml(agent)}</td>
+        <td><span class="agent-cost-source agent-cost-source-${source}">${source}</span></td>
+        <td>${amount}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const byAgent = cost?.by_agent_usd || {};
+  const agentRows = Object.entries(byAgent)
+    .filter(([, v]) => Number(v) > 0)
+    .map(
+      ([name, usd]) =>
+        `<li><span>${escapeHtml(name)}</span><span>$${Number(usd).toFixed(4)}</span></li>`
+    )
+    .join("");
+
+  return `
+    <p class="agent-cost-popover-title">Agent cost breakdown</p>
+    <table class="agent-cost-table">
+      <thead><tr><th>Step</th><th>Source</th><th>Cost</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3">No agent calls recorded</td></tr>'}</tbody>
+    </table>
+    ${
+      agentRows
+        ? `<ul class="agent-cost-by-agent">${agentRows}</ul>`
+        : ""
+    }
+    <p class="agent-cost-popover-total">
+      Total <strong>$${Number(cost.total_cost_usd || 0).toFixed(4)}</strong>
+      · ${cost.live_api_calls || 0} live
+      · ${(cost.total_input_tokens || 0).toLocaleString()} in /
+      ${(cost.total_output_tokens || 0).toLocaleString()} out tokens
+    </p>`;
+}
+
+function renderAgentCostLink(cost) {
+  if (cost?.total_cost_usd == null) return "";
+  const usd = Number(cost.total_cost_usd).toFixed(4);
+  const live = cost.live_api_calls || 0;
+  return ` · <span class="agent-cost-wrap">
+    <button type="button" class="agent-cost-link" id="agent-cost-trigger" aria-haspopup="dialog" aria-expanded="false">
+      Agent cost $${usd} (${live} live call${live === 1 ? "" : "s"})
+    </button>
+    <div class="agent-cost-popover" id="agent-cost-popover" role="dialog" aria-label="Agent cost breakdown" hidden>
+      ${renderAgentCostBreakdown(cost)}
+    </div>
+  </span>`;
+}
+
+function bindAgentCostPopover() {
+  const trigger = document.getElementById("agent-cost-trigger");
+  const popover = document.getElementById("agent-cost-popover");
+  if (!trigger || !popover) return;
+
+  let pinned = false;
+  let hideTimer = null;
+
+  const show = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    popover.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+  };
+
+  const hide = () => {
+    if (pinned) return;
+    popover.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+  };
+
+  trigger.addEventListener("mouseenter", show);
+  trigger.addEventListener("mouseleave", () => {
+    hideTimer = setTimeout(hide, 120);
+  });
+  popover.addEventListener("mouseenter", show);
+  popover.addEventListener("mouseleave", () => {
+    hideTimer = setTimeout(hide, 120);
+  });
+  trigger.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pinned = !pinned;
+    if (pinned) show();
+    else hide();
+  });
+  document.addEventListener("click", (e) => {
+    if (trigger.contains(e.target) || popover.contains(e.target)) return;
+    pinned = false;
+    hide();
+  });
+}
+
 function bindScorecardActions(data) {
   const genBtn = document.getElementById("kyb-generate-cert");
   const networkBtn = document.getElementById("kyb-view-network");
 
   networkBtn?.addEventListener("click", () => openNetworkTab(data));
+
+  bindAgentCostPopover();
 
   genBtn?.addEventListener("click", () => {
     if (networkAdmissionGranted) {
@@ -1212,11 +1315,7 @@ function renderScorecard(data) {
     confidence != null ? `${Math.round(Number(confidence) * 100)}%` : "—";
 
   const cost = data.cost_analysis;
-  const costUsd = cost?.total_cost_usd;
-  const costLine =
-    costUsd != null
-      ? ` · API cost $${Number(costUsd).toFixed(4)} (${cost.live_api_calls || 0} live call${cost.live_api_calls === 1 ? "" : "s"})`
-      : "";
+  const costLine = renderAgentCostLink(cost);
 
   return `
     <div class="scorecard-header">
