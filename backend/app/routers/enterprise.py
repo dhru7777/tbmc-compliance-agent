@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from app.services import demo_companies, kyb_service
+from app.services import demo_companies, kyb_service, session_store
 
 router = APIRouter()
 
@@ -33,10 +33,23 @@ class KybCrossCheckRequest(BaseModel):
     business_purpose: str = ""
 
 
+class KybChatRequest(BaseModel):
+    message: str = ""
+
+
 @router.post("/kyb/session")
 async def kyb_create_session():
     """Create empty session — verification runs on submit via agent orchestrator."""
     return await kyb_service.create_session()
+
+
+@router.post("/cache/clear")
+def clear_api_cache():
+    """Clear disk + in-process LLM/search response cache."""
+    from app.services import api_cache
+
+    removed = api_cache.clear_all()
+    return {"cleared": removed, "cache_enabled": api_cache.CACHE_ENABLED}
 
 
 @router.get("/demo-companies")
@@ -59,6 +72,8 @@ def get_demo_company_pdf(company_id: str):
         pdf_bytes, filename, instance_id = demo_companies.build_demo_pdf(company_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Demo company not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -69,6 +84,45 @@ def get_demo_company_pdf(company_id: str):
             "X-Demo-Document-Id": instance_id,
         },
     )
+
+
+@router.get("/demo-companies/{company_id}/documents")
+def get_demo_company_documents(company_id: str):
+    """Return all mock-package text files for a trial company."""
+    try:
+        documents = demo_companies.load_mock_bundle_documents(company_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Demo company not found")
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {
+        "company_id": company_id,
+        "document_count": len(documents),
+        "documents": documents,
+    }
+
+
+@router.post("/kyb/{session_id}/extract-documents")
+async def kyb_extract_documents(
+    session_id: str,
+    trial_company_id: str = Form(default=""),
+    documents: list[UploadFile] = File(default=[]),
+    document_labels: list[str] = Form(default=[]),
+):
+    """Extract KYB fields from uploaded documents and return suggested form values."""
+    if not documents:
+        raise HTTPException(status_code=400, detail="Upload at least one document to extract.")
+    try:
+        uploads = []
+        for i, doc in enumerate(documents):
+            label = document_labels[i] if i < len(document_labels) else doc.filename or f"document_{i}"
+            content = await doc.read()
+            uploads.append((label, doc.filename or "upload", content))
+        return await kyb_service.extract_documents_preview(
+            session_id, uploads, trial_company_id=trial_company_id or None
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 @router.post("/kyb/{session_id}/search")
@@ -151,6 +205,29 @@ def kyb_get_session(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+@router.post("/kyb/{session_id}/chat")
+async def kyb_chat(session_id: str, body: KybChatRequest):
+    """Human chat bar — agent guides until KYB objective is achieved."""
+    try:
+        return await kyb_service.post_chat_message(session_id, body.message)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/kyb/{session_id}/chat")
+def kyb_get_chat(session_id: str):
+    try:
+        session = kyb_service.get_session_summary(session_id)
+        return {
+            "session_id": session_id,
+            "chat_messages": session.get("chat_messages") or [],
+            "objective_status": session.get("objective_status"),
+            "coach_last_message": session.get("coach_last_message", ""),
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.post("/kyb/{session_id}/verify")
 async def kyb_verify(
     session_id: str,
@@ -175,7 +252,7 @@ async def kyb_verify(
             label = document_labels[i] if i < len(document_labels) else doc.filename or f"document_{i}"
             content = await doc.read()
             uploads.append((label, doc.filename or "upload", content))
-        _require_documents(uploads)
+        _require_documents(session_id, uploads)
         return await kyb_service.run_verify_only(
             session_id, uploads, legal_name, state, ein, operating_address, business_purpose, owners, persons
         )
@@ -201,12 +278,15 @@ async def _parse_kyb_submit_form(
     return owners, persons, uploads
 
 
-def _require_documents(uploads: list) -> None:
-    if not uploads:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one document is required. Upload formation or SOS files before running verification.",
-        )
+def _require_documents(session_id: str, uploads: list) -> None:
+    if uploads:
+        return
+    if session_store.load_stored_uploads(session_id):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail="At least one document is required. Upload formation or SOS files before running verification.",
+    )
 
 
 def _parse_volume(low: str, high: str) -> tuple[float | None, float | None]:
@@ -249,7 +329,7 @@ async def kyb_submit_stream(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON in owners/persons fields")
 
-    _require_documents(uploads)
+    _require_documents(session_id, uploads)
     vol_low, vol_high = _parse_volume(monthly_volume_low_usd, monthly_volume_high_usd)
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -328,7 +408,7 @@ async def kyb_submit(
         owners, persons, uploads = await _parse_kyb_submit_form(
             beneficial_owners, control_persons, documents, document_labels
         )
-        _require_documents(uploads)
+        _require_documents(session_id, uploads)
         vol_low, vol_high = _parse_volume(monthly_volume_low_usd, monthly_volume_high_usd)
         return await kyb_service.submit_kyb(
             session_id, ein, operating_address, business_purpose, owners, persons, uploads,

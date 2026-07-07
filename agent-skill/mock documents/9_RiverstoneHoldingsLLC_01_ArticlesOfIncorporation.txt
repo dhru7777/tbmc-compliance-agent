@@ -1,0 +1,22 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL LEGAL FILING]
+
+STATE OF DELAWARE
+CERTIFICATE OF FORMATION
+
+Entity Name: Riverstone Holdings LLC
+Entity Type: Limited Liability Company
+State of Formation: DE
+Formation Date: 03/15/2021
+File Number: 6128473
+
+Registered Agent: Corporate Services Inc.
+Registered Agent Address: 251 Little Falls Drive, Wilmington, DE 19808
+
+Principal Office: 251 Little Falls Drive, Wilmington, DE 19808
+Business Purpose: Commercial real estate holding and property management services
+
+Federal EIN: 84-7293841
+
+Status: Active - in good standing
+
+[END OF MOCK DOCUMENT]

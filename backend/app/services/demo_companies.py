@@ -1,105 +1,51 @@
-"""Trial/demo company packages — unique PDFs for UI selection (not disk-cached)."""
+"""Trial/demo company packages for UI selection."""
 
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 TRIAL_DOC_MARKER = "KYB TRIAL DOCUMENT - NOT FOR PRODUCTION USE"
+MOCK_PACKAGE_MARKER = "[MOCK DOCUMENT —"
+MOCK_SLOT_MARKER = "DOCUMENT SLOT"
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MOCK_DOCS_DIR = REPO_ROOT / "agent-skill" / "mock documents"
+
+RIVERSTONE_MOCK_FILENAMES = [
+    "9_RiverstoneHoldingsLLC_01_ArticlesOfIncorporation.txt",
+    "9_RiverstoneHoldingsLLC_02_CertificateOfGoodStanding.txt",
+    "9_RiverstoneHoldingsLLC_03_EINConfirmationLetter.txt",
+    "9_RiverstoneHoldingsLLC_04_ProofOfBusinessAddress.txt",
+    "9_RiverstoneHoldingsLLC_05_OperatingAgreementExcerpt.txt",
+    "9_RiverstoneHoldingsLLC_06_BeneficialOwnershipCertification.txt",
+    "9_RiverstoneHoldingsLLC_07_BusinessPurposeStatement.txt",
+    "9_RiverstoneHoldingsLLC_08_IdentityVerificationResult.txt",
+]
 
 DEMO_COMPANIES: list[dict[str, Any]] = [
     {
-        "id": "nexbridge-capital",
-        "label": "Nexbridge Capital LLC — complete",
+        "id": "riverstone-holdings",
+        "label": "Riverstone Holdings LLC — complete package",
         "complete": True,
-        "hint": "Full formation, EIN, ownership, and ID in one file.",
-        "legal_name": "Nexbridge Capital LLC",
+        "package_kind": "mock_bundle",
+        "mock_document_filenames": RIVERSTONE_MOCK_FILENAMES,
+        "hint": "Loads all 8 KYB documents (formation, EIN, ownership, address, purpose, and ID).",
+        "legal_name": "Riverstone Holdings LLC",
         "state": "DE",
-        "ein": "84-3928174",
-        "operating_address": "1209 Orange Street, Wilmington, DE 19801",
-        "business_purpose": "Payment processing and financial technology services",
-        "monthly_volume_low_usd": 80000,
-        "monthly_volume_high_usd": 220000,
-        "beneficial_owners": [
-            {"name": "Alex Morgan", "ownership_pct": 60},
-            {"name": "Riley Chen", "ownership_pct": 40},
-        ],
-        "control_persons": [{"name": "Alex Morgan", "title": "CEO"}],
-        "document_label": "Certificate of Formation and Government ID",
-        "file_stem": "nexbridge_capital_formation",
-    },
-    {
-        "id": "summit-harbor-logistics",
-        "label": "Summit Harbor Logistics Inc. — complete",
-        "complete": True,
-        "hint": "Delaware corporation — all KYB fields present.",
-        "legal_name": "Summit Harbor Logistics Inc.",
-        "state": "DE",
-        "ein": "52-1847392",
-        "operating_address": "251 Little Falls Drive, Wilmington, DE 19808",
-        "business_purpose": "Freight brokerage and supply chain logistics",
-        "monthly_volume_low_usd": 45000,
-        "monthly_volume_high_usd": 120000,
-        "beneficial_owners": [{"name": "Jordan Ellis", "ownership_pct": 100}],
-        "control_persons": [{"name": "Jordan Ellis", "title": "President"}],
-        "document_label": "Articles of Incorporation and Government ID",
-        "file_stem": "summit_harbor_articles",
-    },
-    {
-        "id": "clearline-payments",
-        "label": "Clearline Payments Corporation — complete",
-        "complete": True,
-        "hint": "Wyoming fintech — full package for network admission trial.",
-        "legal_name": "Clearline Payments Corporation",
-        "state": "WY",
-        "ein": "88-2049156",
-        "operating_address": "30 N Gould St Ste R, Sheridan, WY 82801",
-        "business_purpose": "Digital payment infrastructure and merchant services",
-        "monthly_volume_low_usd": 150000,
-        "monthly_volume_high_usd": 400000,
-        "beneficial_owners": [
-            {"name": "Samira Okonkwo", "ownership_pct": 70},
-            {"name": "Dev Patel", "ownership_pct": 30},
-        ],
-        "control_persons": [{"name": "Samira Okonkwo", "title": "CEO"}],
-        "document_label": "SOS Formation Certificate and Government ID",
-        "file_stem": "clearline_payments_sos",
-    },
-    {
-        "id": "redwood-atlas-trading",
-        "label": "Redwood Atlas Trading LLC — incomplete (EIN missing)",
-        "complete": False,
-        "hint": "Formation on file but EIN and ownership not included.",
-        "legal_name": "Redwood Atlas Trading LLC",
-        "state": "DE",
-        "ein": "",
-        "operating_address": "850 New Burton Road, Dover, DE 19904",
-        "business_purpose": "Commodity trading and import-export",
-        "monthly_volume_low_usd": 30000,
-        "monthly_volume_high_usd": 90000,
-        "beneficial_owners": [],
-        "control_persons": [],
-        "document_label": "Certificate of Formation — information missing",
-        "file_stem": "redwood_atlas_formation_incomplete",
-    },
-    {
-        "id": "borealis-gate-ventures",
-        "label": "Borealis Gate Ventures LLC — incomplete (good standing missing)",
-        "complete": False,
-        "hint": "Entity named but active status certificate not included.",
-        "legal_name": "Borealis Gate Ventures LLC",
-        "state": "NV",
-        "ein": "91-7734520",
-        "operating_address": "401 Ryland St, Reno, NV 89502",
-        "business_purpose": "Venture capital and advisory services",
-        "monthly_volume_low_usd": 10000,
-        "monthly_volume_high_usd": 50000,
-        "beneficial_owners": [{"name": "Casey Nguyen", "ownership_pct": 100}],
-        "control_persons": [{"name": "Casey Nguyen", "title": "Managing Member"}],
-        "document_label": "Articles of Organization and Government ID — good standing missing",
-        "file_stem": "borealis_gate_articles_incomplete",
+        "ein": "84-7293841",
+        "operating_address": "251 Little Falls Drive, Suite 200, Wilmington, DE 19808",
+        "business_purpose": "Commercial real estate holding and property management services",
+        "monthly_volume_low_usd": 100000,
+        "monthly_volume_high_usd": 250000,
+        "beneficial_owners": [{"name": "Marcus Chen", "ownership_pct": 100}],
+        "control_persons": [{"name": "Marcus Chen", "title": "Managing Member"}],
+        "document_label": "Riverstone Holdings KYB package",
+        "file_stem": "riverstone_holdings",
     },
 ]
 
@@ -236,6 +182,127 @@ def parse_trial_document_fields(text: str) -> dict[str, Any]:
     return fields
 
 
+def is_mock_slot_document(text: str) -> bool:
+    return MOCK_SLOT_MARKER in (text or "")
+
+
+def is_mock_package_document(text: str) -> bool:
+    t = text or ""
+    if MOCK_SLOT_MARKER in t:
+        return False
+    return MOCK_PACKAGE_MARKER in t
+
+
+def _mock_category_to_type(category: str) -> str:
+    cat = category.lower()
+    if "ein" in cat:
+        return "ein_letter"
+    if "beneficial" in cat or "ownership" in cat:
+        return "beneficial_ownership"
+    if "operating" in cat:
+        return "operating_agreement"
+    if "good standing" in cat:
+        return "good_standing"
+    if "articles" in cat or "formation" in cat:
+        return "articles"
+    if "address" in cat:
+        return "address_proof"
+    if "purpose" in cat:
+        return "business_purpose"
+    if "identity" in cat or "government" in cat:
+        return "government_id"
+    return "other"
+
+
+def parse_mock_package_fields(text: str) -> dict[str, Any]:
+    """Deterministic extraction for agent-skill mock KYB text packages."""
+    import re
+
+    ownership_line = re.compile(r"^([^:\n]+?):\s*(\d+(?:\.\d+)?)\s*%\s*ownership", re.I)
+    fields: dict[str, Any] = {
+        "document_type": "articles" if "certificate of formation" in (text or "").lower() else "other",
+        "entity_name": None,
+        "ein": None,
+        "incorporation_state": None,
+        "person_name": None,
+        "address": None,
+        "formation_date": None,
+        "beneficial_owners": [],
+        "control_persons": [],
+        "key_facts": [],
+    }
+    seen_owners: set[str] = set()
+    seen_control: set[str] = set()
+
+    def add_owner(name: str, pct: float) -> None:
+        key = name.lower()
+        if key in seen_owners:
+            return
+        seen_owners.add(key)
+        fields["beneficial_owners"].append({"name": name, "ownership_pct": pct})
+
+    def add_control(name: str, title: str) -> None:
+        key = name.lower()
+        if key in seen_control:
+            return
+        seen_control.add(key)
+        fields["control_persons"].append({"name": name, "title": title})
+
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("Document category:"):
+            fields["document_type"] = _mock_category_to_type(line.split(":", 1)[1])
+        elif line.startswith("Entity Name:"):
+            fields["entity_name"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Federal EIN:"):
+            ein = line.split(":", 1)[1].strip()
+            if "NOT PROVIDED" not in ein.upper():
+                fields["ein"] = ein
+        elif line.startswith("State of Formation:"):
+            st = line.split(":", 1)[1].strip().upper()
+            if len(st) == 2:
+                fields["incorporation_state"] = st
+        elif line.startswith(("Principal Office:", "Mailing Address:", "Business Address:")):
+            fields["address"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Business Purpose:"):
+            purpose = line.split(":", 1)[1].strip()
+            fields["key_facts"].append(f"Business purpose: {purpose}")
+            if not fields.get("business_purpose"):
+                fields["business_purpose"] = purpose
+        elif line.startswith("Formation Date:"):
+            fields["formation_date"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Status:") and "NOT SUBMITTED" not in line.upper():
+            fields["key_facts"].append(line)
+        elif line.startswith("Responsible Party:"):
+            fields["person_name"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Managing Member:"):
+            person = line.split(":", 1)[1].strip()
+            name = person.split(",")[0].strip()
+            title = person.split(",", 1)[1].strip() if "," in person else "Managing Member"
+            add_control(name, title)
+            fields["key_facts"].append(line)
+        elif line.startswith("Control Person:"):
+            person = line.split(":", 1)[1].strip()
+            name = person.split(",")[0].strip()
+            title = person.split(",", 1)[1].strip() if "," in person else "Control person"
+            add_control(name, title)
+            fields["key_facts"].append(line)
+        elif line.lower().startswith("signed:"):
+            person = line.split(":", 1)[1].strip()
+            name = person.split(",")[0].strip()
+            title = person.split(",", 1)[1].strip() if "," in person else "Managing Member"
+            add_control(name, title)
+        elif match := ownership_line.match(line):
+            add_owner(match.group(1).strip(), float(match.group(2)))
+            fields["key_facts"].append(line)
+        elif "GOVERNMENT ID" in line.upper() or "IDENTITY VERIFICATION" in line.upper():
+            fields["document_type"] = "government_id"
+            fields["key_facts"].append(line)
+    return fields
+
+
 def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
     cid = company["id"]
     instance_id = uuid.uuid4().hex
@@ -324,6 +391,8 @@ def _pdf_text_lines(company: dict[str, Any]) -> tuple[list[str], str]:
 def build_demo_pdf(company_id: str) -> tuple[bytes, str, str]:
     """Return (pdf_bytes, filename, instance_id). Fresh content on every call."""
     company = get_demo_company(company_id)
+    if company.get("package_kind") == "mock_bundle":
+        raise ValueError(f"{company_id} uses a mock document bundle, not a PDF")
     lines, instance_id = _pdf_text_lines(company)
     ops: list[str] = ["BT", "/F1 10 Tf", "48 780 Td"]
     for i, line in enumerate(lines[:58]):
@@ -375,13 +444,46 @@ def _escape_pdf_text(text: str) -> str:
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
+def _label_from_mock_filename(filename: str) -> str:
+    match = re.search(r"_\d+_(.+)\.[^.]+$", filename)
+    if match:
+        return match.group(1).replace("_", " ").strip()
+    stem = filename.rsplit(".", 1)[0]
+    return stem.replace("_", " ").replace("-", " ").strip()
+
+
+def load_mock_bundle_documents(company_id: str) -> list[dict[str, str]]:
+    """Return all mock-package text files for a trial company."""
+    company = get_demo_company(company_id)
+    if company.get("package_kind") != "mock_bundle":
+        raise ValueError(f"{company_id} is not a mock document bundle")
+    filenames = company.get("mock_document_filenames") or []
+    if not filenames:
+        raise ValueError(f"{company_id} has no mock documents configured")
+
+    documents: list[dict[str, str]] = []
+    for filename in filenames:
+        path = MOCK_DOCS_DIR / filename
+        if not path.is_file():
+            raise FileNotFoundError(f"Mock document missing: {filename}")
+        documents.append(
+            {
+                "filename": filename,
+                "label": _label_from_mock_filename(filename),
+                "content": path.read_text(encoding="utf-8"),
+            }
+        )
+    return documents
+
+
 def demo_profile(company_id: str) -> dict[str, Any]:
     c = get_demo_company(company_id)
-    return {
+    profile: dict[str, Any] = {
         "id": c["id"],
         "label": c["label"],
         "complete": c["complete"],
         "hint": c["hint"],
+        "package_kind": c.get("package_kind", "single_pdf"),
         "legal_name": c["legal_name"],
         "state": c["state"],
         "ein": c["ein"],
@@ -394,3 +496,6 @@ def demo_profile(company_id: str) -> dict[str, Any]:
         "document_label": c["document_label"],
         "document_filename_prefix": c["file_stem"],
     }
+    if c.get("package_kind") == "mock_bundle":
+        profile["document_count"] = len(c.get("mock_document_filenames") or [])
+    return profile

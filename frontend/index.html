@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=45" />
+  <link rel="stylesheet" href="css/styles.css?v=52" />
 </head>
 <body class="landing-active">
 
@@ -79,6 +79,12 @@
               <button type="button" class="btn btn-secondary" id="enterprise-add-doc">Add files</button>
             </div>
             <ul class="doc-list" id="enterprise-doc-list"></ul>
+            <p id="doc-extract-status" class="demo-company-status hidden" aria-live="polite"></p>
+            <div id="audit-trail-panel" class="audit-trail-panel hidden">
+              <h4 class="audit-trail-title">Verification history</h4>
+              <ul id="audit-trail-list" class="audit-trail-list"></ul>
+              <button type="button" class="btn btn-secondary btn-sm" id="kyb-view-audit-md">View full audit log</button>
+            </div>
           </section>
 
           <section class="kyb-section company-details-section">
@@ -111,9 +117,9 @@
             <div class="form-group volume-range-group">
               <label class="volume-range-label" for="kyb_volume_low">Expected monthly volume (USD)</label>
               <div class="volume-range-row">
-                <input type="number" id="kyb_volume_low" placeholder="From" min="0" step="1000" aria-label="Monthly volume from" />
+                <input type="number" id="kyb_volume_low" placeholder="e.g. 100000" min="0" step="1000" aria-label="Monthly volume from" />
                 <span class="volume-range-dash" aria-hidden="true">–</span>
-                <input type="number" id="kyb_volume_high" placeholder="To" min="0" step="1000" aria-label="Monthly volume to" />
+                <input type="number" id="kyb_volume_high" placeholder="e.g. 250000" min="0" step="1000" aria-label="Monthly volume to" />
               </div>
             </div>
           </section>
@@ -138,6 +144,20 @@
         </div>
 
         <aside class="kyb-sidebar">
+          <!-- Agent chat — future scope (disabled) -->
+          <details class="agent-chat-panel hidden" id="agent-chat-panel" hidden>
+            <summary class="agent-chat-summary">
+              <span class="agent-chat-label">KYB Agent</span>
+              <span id="agent-chat-objective" class="agent-chat-objective">In progress</span>
+            </summary>
+            <div class="agent-chat-messages" id="agent-chat-messages" aria-live="polite"></div>
+            <div class="agent-chat-actions" id="agent-chat-actions"></div>
+            <form class="agent-chat-form" id="agent-chat-form">
+              <input type="text" id="agent-chat-input" placeholder="Ask a question…" autocomplete="off" />
+              <button type="submit" class="btn btn-secondary btn-sm">Send</button>
+            </form>
+          </details>
+
           <details class="agent-trace-panel" id="agent-trace-panel" open>
             <summary class="agent-trace-summary">
               <span class="agent-trace-label">Agent activity</span>
@@ -231,6 +251,6 @@
   </footer>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=48"></script>
+  <script src="js/app.js?v=53"></script>
 </body>
 </html>

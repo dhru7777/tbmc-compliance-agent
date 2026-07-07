@@ -159,22 +159,16 @@ def public_search_query(user: dict) -> dict[str, str]:
 
 def enrich_claims_from_documents(user: dict, extractions: list[dict]) -> None:
     """Fill empty form fields from doc extractions (in-place)."""
-    for ext in extractions:
-        extracted = ext.get("extracted") or {}
-        if not user.get("legal_name"):
-            name = as_text(extracted.get("entity_name") or extracted.get("legal_name"))
-            if name:
-                user["legal_name"] = name
-        if not user.get("ein"):
-            ein = as_text(extracted.get("ein"))
-            if ein:
-                user["ein"] = ein
-        if not user.get("operating_address"):
-            addr = as_text(extracted.get("address"))
-            if addr:
-                user["operating_address"] = addr
-        if not user.get("state"):
-            addr = as_text(extracted.get("address"))
-            st = kyb_rules.extract_state_from_address(addr) if addr else None
-            if st:
-                user["state"] = st
+    merged = kyb_rules.merge_user_claims_from_extractions(user, extractions)
+    for key, val in merged.items():
+        if key in ("beneficial_owners", "control_persons"):
+            if val and not user.get(key):
+                user[key] = val
+        elif val and not user.get(key):
+            user[key] = val
+    if not user.get("state"):
+        st = kyb_rules._state_from_extractions(extractions)
+        if not st and user.get("operating_address"):
+            st = kyb_rules.extract_state_from_address(str(user.get("operating_address")))
+        if st:
+            user["state"] = st

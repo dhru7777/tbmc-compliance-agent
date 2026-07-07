@@ -27,6 +27,10 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def content_hash_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
 def _path(key: str) -> Path:
     return CACHE_DIR / f"{key}.json"
 
@@ -84,3 +88,18 @@ def mark_cached(value: dict[str, Any]) -> dict[str, Any]:
     out = dict(value)
     out["from_cache"] = True
     return out
+
+
+def clear_all() -> int:
+    """Delete all disk and in-memory cache entries. Returns files removed."""
+    _memory.clear()
+    if not CACHE_DIR.exists():
+        return 0
+    removed = 0
+    for path in CACHE_DIR.glob("*.json"):
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed

@@ -1,0 +1,18 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL ID VERIFICATION]
+
+Document category: Identity Verification Result
+
+Entity Name: Riverstone Holdings LLC
+
+GOVERNMENT ID - Managing Member
+
+Name: Marcus Chen
+Title: Managing Member
+Document: Driver License (DE)
+ID verification: client-submitted copy on file
+Verification Status: Passed
+Verification Date: 06/01/2026
+
+Control Person: Marcus Chen, Managing Member
+
+[END OF MOCK DOCUMENT]

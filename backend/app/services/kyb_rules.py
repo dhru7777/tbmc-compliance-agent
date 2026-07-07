@@ -3,6 +3,7 @@
 import os
 import re
 from difflib import SequenceMatcher
+from typing import Any
 
 OFAC_DENY_NAMES = [
     "specially designated national",
@@ -12,6 +13,39 @@ OFAC_DENY_NAMES = [
 KYB_CONFIDENCE_FLOOR = float(os.getenv("KYB_CONFIDENCE_FLOOR", "0.7"))
 
 EIN_PATTERN = re.compile(r"^\d{2}-\d{7}$")
+EIN_IN_TEXT = re.compile(r"\b\d{2}-\d{7}\b")
+
+_NON_PERSON_NAME_WORDS = frozenset(
+    {
+        "authorized",
+        "bind",
+        "binding",
+        "company",
+        "ordinary",
+        "course",
+        "business",
+        "matters",
+        "including",
+        "opening",
+        "accounts",
+        "executing",
+        "contracts",
+        "signed",
+        "member",
+        "managing",
+        "control",
+        "person",
+        "entity",
+        "responsible",
+        "party",
+    }
+)
+
+_CONTROL_LINE = re.compile(
+    r"(?:control\s+person|managing\s+member|signed)\s*:\s*([^,\n]+?)(?:\s*,\s*(.+))?$",
+    re.I,
+)
+_OWNERSHIP_LINE = re.compile(r"([^:\n]{2,}?):\s*(\d+(?:\.\d+)?)\s*%\s*ownership", re.I)
 
 
 def as_text(value) -> str:
@@ -24,6 +58,39 @@ def as_text(value) -> str:
         parts = [as_text(v) for v in value]
         return ", ".join(p for p in parts if p)
     return str(value).strip()
+
+
+def _normalize_ein(ein: str) -> str:
+    ein = as_text(ein)
+    if ein.upper().replace(" ", "") in ("XX-XXXXXXX", "XX-XXXXXXXX"):
+        return ""
+    return ein
+
+
+def _is_plausible_person_name(name: str) -> bool:
+    """Reject sentence fragments that regex heuristics sometimes capture as names."""
+    name = as_text(name)
+    if not name or len(name) < 3 or len(name) > 80:
+        return False
+    words = [w.lower() for w in re.findall(r"[A-Za-z]+", name)]
+    if not words or len(words) > 5:
+        return False
+    if any(w in _NON_PERSON_NAME_WORDS for w in words):
+        return False
+    if not re.search(r"[A-Z][a-z]+(?:\s+[A-Z][a-z.]+)+", name):
+        return False
+    return True
+
+
+def _parse_control_line(text: str) -> dict | None:
+    match = _CONTROL_LINE.search(str(text).strip())
+    if not match:
+        return None
+    name = match.group(1).strip()
+    if not _is_plausible_person_name(name):
+        return None
+    title = as_text(match.group(2)) if match.lastindex and match.group(2) else "Managing Member"
+    return {"name": name, "title": title or "Managing Member"}
 
 
 def fuzzy_match(a: str, b: str) -> float:
@@ -51,14 +118,41 @@ def extract_state_from_address(addr: str) -> str | None:
     return match.group(1) if match else None
 
 
-def check_legal_name(user_name: str, public_name: str) -> dict:
-    user_name = as_text(user_name)
+def _legal_name_from_extractions(extractions: list[dict]) -> str:
+    for ext in extractions:
+        extracted = ext.get("extracted") or {}
+        name = as_text(extracted.get("entity_name") or extracted.get("legal_name"))
+        if name:
+            return name
+    return ""
+
+
+def _state_from_extractions(extractions: list[dict]) -> str:
+    for ext in extractions:
+        extracted = ext.get("extracted") or {}
+        st = as_text(extracted.get("incorporation_state") or extracted.get("state"))
+        if len(st) == 2 and st.isalpha():
+            return st.upper()
+        addr = as_text(extracted.get("address"))
+        inferred = extract_state_from_address(addr) if addr else None
+        if inferred:
+            return inferred
+    return ""
+
+
+def check_legal_name(
+    user_name: str,
+    public_name: str,
+    extractions: list[dict] | None = None,
+) -> dict:
+    extractions = extractions or []
+    user_name = as_text(user_name) or _legal_name_from_extractions(extractions)
     public_name = as_text(public_name)
     if not user_name and not public_name:
         return _with_recommendation({"result": "FLAG", "detail": "Legal name not provided"}, 1)
-    if not user_name:
-        return {"result": "SKIP", "detail": "Inferred from documents — no form entry to compare"}
     if not public_name:
+        if user_name:
+            return {"result": "PASS", "detail": "Legal name attested from uploaded documents"}
         return {"result": "SKIP", "detail": "No public record to compare"}
     score = fuzzy_match(user_name, public_name)
     if score >= 0.85:
@@ -239,85 +333,112 @@ def _with_recommendation(result: dict, num: int) -> dict:
     return result
 
 
+def _parse_owner_entry(raw: Any) -> dict | None:
+    if isinstance(raw, dict):
+        name = as_text(raw.get("name"))
+        if not name or not _is_plausible_person_name(name):
+            return None
+        pct = raw.get("ownership_pct", raw.get("percent"))
+        try:
+            pct = float(pct) if pct is not None else None
+        except (TypeError, ValueError):
+            pct = None
+        if pct is None:
+            return None
+        return {"name": name, "ownership_pct": pct}
+    name = as_text(raw)
+    if name and _is_plausible_person_name(name):
+        return {"name": name, "ownership_pct": 25.0}
+    return None
+
+
 def _owners_from_extractions(extractions: list[dict]) -> list[dict]:
     owners: list[dict] = []
     seen: set[str] = set()
     for ext in extractions:
-        label = (ext.get("label") or "").lower()
         extracted = ext.get("extracted") or {}
-        if not any(k in label for k in ("beneficial", "ownership", "cdd", "boi")):
-            continue
         for fact in extracted.get("key_facts") or []:
-            text = str(fact)
-            match = re.search(r"([^:]{2,}?):\s*(\d+(?:\.\d+)?)\s*%\s*ownership", text, re.I)
-            if match:
-                name = match.group(1).strip()
-                key = name.lower()
-                if key not in seen:
-                    seen.add(key)
-                    owners.append({"name": name, "ownership_pct": float(match.group(2))})
-        names = extracted.get("person_name")
-        if names:
-            name_list = names if isinstance(names, (list, tuple)) else [names]
-            for name in name_list:
-                n = as_text(name)
-                if n and n.lower() not in seen:
-                    seen.add(n.lower())
-                    owners.append({"name": n, "ownership_pct": 25})
+            match = _OWNERSHIP_LINE.search(str(fact))
+            if not match:
+                continue
+            name = match.group(1).strip()
+            if not _is_plausible_person_name(name):
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            owners.append({"name": name, "ownership_pct": float(match.group(2))})
+        for raw in extracted.get("beneficial_owners") or []:
+            entry = _parse_owner_entry(raw)
+            if not entry:
+                name = as_text(raw.get("name") if isinstance(raw, dict) else raw)
+                if not _is_plausible_person_name(name):
+                    continue
+                pct = None
+                if isinstance(raw, dict):
+                    try:
+                        pct = float(raw.get("ownership_pct", raw.get("percent")))
+                    except (TypeError, ValueError):
+                        pct = None
+                entry = {"name": name, "ownership_pct": pct if pct is not None else 25.0}
+            key = entry["name"].lower()
+            if key not in seen:
+                seen.add(key)
+                owners.append(entry)
     return owners
+
+
+def _parse_control_entry(raw: Any) -> dict | None:
+    if isinstance(raw, dict):
+        name = as_text(raw.get("name"))
+        if not name or not _is_plausible_person_name(name):
+            return None
+        return {"name": name, "title": as_text(raw.get("title")) or "Control person"}
+    name = as_text(raw)
+    if name and _is_plausible_person_name(name):
+        return {"name": name, "title": "Control person"}
+    return None
 
 
 def _control_from_extractions(extractions: list[dict]) -> list[dict]:
     persons: list[dict] = []
     seen: set[str] = set()
+
+    def add_person(entry: dict | None) -> None:
+        if not entry:
+            return
+        key = entry["name"].lower()
+        if key in seen:
+            return
+        seen.add(key)
+        persons.append(entry)
+
     for ext in extractions:
-        label = (ext.get("label") or "").lower()
         extracted = ext.get("extracted") or {}
+        for fact in extracted.get("key_facts") or []:
+            add_person(_parse_control_line(str(fact)))
+        for raw in extracted.get("control_persons") or []:
+            add_person(_parse_control_entry(raw))
+        name_val = extracted.get("person_name")
+        name_candidates = name_val if isinstance(name_val, (list, tuple)) else [name_val]
+        label = (ext.get("label") or ext.get("filename") or "").lower()
         relevant = any(
             k in label
-            for k in ("operating", "agreement", "control", "management", "officer", "beneficial", "ownership")
+            for k in ("operating", "agreement", "control", "management", "officer", "identity", "government")
         )
         if not relevant:
             continue
-        for fact in extracted.get("key_facts") or []:
-            text = str(fact)
-            lower = text.lower()
-            if not any(k in lower for k in ("ceo", "managing member", "president", "control person")):
-                continue
-            match = re.search(r"^([^:]{2,}?):\s*(\d+(?:\.\d+)?)\s*%\s*ownership", text, re.I)
-            if match:
-                name = match.group(1).strip()
-                if name.lower() not in seen:
-                    seen.add(name.lower())
-                    title = "CEO" if "ceo" in lower else "Managing Member"
-                    persons.append({"name": name, "title": title})
-                continue
-            role_match = re.search(
-                r"(?:managing member\s*/?\s*ceo|ceo|managing member|president)[:\s]+([A-Z][A-Za-z.\s]+?)(?:\s+with|\s*$|,)",
-                text,
-                re.I,
-            )
-            if role_match:
-                name = role_match.group(1).strip()
-                if name.lower() not in seen:
-                    seen.add(name.lower())
-                    persons.append({"name": name, "title": "Managing Member"})
-        name_val = extracted.get("person_name")
-        name_candidates = name_val if isinstance(name_val, (list, tuple)) else [name_val]
         for raw_name in name_candidates:
             name = as_text(raw_name)
-            if not name:
+            if not _is_plausible_person_name(name):
                 continue
-            name_lower = name.lower()
             for fact in extracted.get("key_facts") or []:
-                text = str(fact)
-                lower = text.lower()
-                if name_lower not in lower:
+                lower = str(fact).lower()
+                if name.lower() not in lower:
                     continue
-                if any(k in lower for k in ("ceo", "managing member", "president", "control person", "authorized")):
-                    if name_lower not in seen:
-                        seen.add(name_lower)
-                        persons.append({"name": name, "title": "Managing Member"})
+                if any(k in lower for k in ("ceo", "managing member", "president", "control person", "signed")):
+                    add_person({"name": name, "title": "Managing Member"})
                     break
     return persons
 
@@ -325,16 +446,44 @@ def _control_from_extractions(extractions: list[dict]) -> list[dict]:
 def _ein_from_extractions(extractions: list[dict]) -> str:
     for ext in extractions:
         extracted = ext.get("extracted") or {}
-        label = (ext.get("label") or "").lower()
-        if extracted.get("ein") or "ein" in label:
-            ein = as_text(extracted.get("ein"))
-            if ein:
-                return ein
+        ein = as_text(extracted.get("ein"))
+        if ein:
+            match = EIN_IN_TEXT.search(ein)
+            return match.group(0) if match else ein
+        label = (ext.get("label") or ext.get("filename") or "").lower()
+        if "ein" not in label and "tax" not in label:
+            continue
+        for fact in extracted.get("key_facts") or []:
+            match = EIN_IN_TEXT.search(str(fact))
+            if match:
+                return match.group(0)
+    for ext in extractions:
+        extracted = ext.get("extracted") or {}
+        for fact in extracted.get("key_facts") or []:
+            match = EIN_IN_TEXT.search(str(fact))
+            if match:
+                return match.group(0)
+        match = EIN_IN_TEXT.search(str(extracted))
+        if match:
+            return match.group(0)
     return ""
 
 
 def _has_id_document(documents: list[dict], extractions: list[dict]) -> bool:
-    id_tokens = ("government id", "gov id", "passport", "driver", "drivers", " license", " state id", "04 id")
+    id_tokens = (
+        "government id",
+        "gov id",
+        "passport",
+        "driver",
+        "drivers",
+        " license",
+        " state id",
+        "04 id",
+        "identity",
+        "identityverification",
+        "id verification",
+        "verification result",
+    )
     labels = " ".join(
         f"{d.get('label', '')} {d.get('filename', '')}".lower() for d in documents
     )
@@ -349,7 +498,7 @@ def _has_id_document(documents: list[dict], extractions: list[dict]) -> bool:
 
 def check_ein(ein: str, extractions: list[dict] | None = None) -> dict:
     extractions = extractions or []
-    form_ein = ein
+    form_ein = _normalize_ein(ein)
     ein = form_ein or _ein_from_extractions(extractions)
     if not ein:
         return _with_recommendation({"result": "FLAG", "detail": "EIN not provided"}, 7)
@@ -488,10 +637,12 @@ def check_formation_documents(public: dict, documents: list[dict]) -> dict:
 
 
 def middesk_corroborate(_legal_name: str, _state: str) -> dict:
-    """Placeholder for future Middesk API corroboration."""
+    """Placeholder for future Middesk API corroboration (UI shows mock trace on verify)."""
     return {
         "available": False,
-        "message": "Middesk corroboration not configured — using LLM public search + deterministic rules only",
+        "mock": True,
+        "provider": "middesk",
+        "message": "Middesk — deterministic rules at verify; live API not configured",
     }
 
 
@@ -507,17 +658,84 @@ def _effective_public_facts(session: dict) -> dict:
     return public
 
 
+def merge_user_claims_from_extractions(user: dict, extractions: list[dict]) -> dict:
+    """Merge empty form fields from document extractions (returns new dict)."""
+    merged = dict(user)
+    merged["ein"] = _normalize_ein(merged.get("ein", ""))
+    doc_entity = _legal_name_from_extractions(extractions)
+    user_name = as_text(merged.get("legal_name"))
+    prefer_docs = bool(doc_entity) and (
+        not user_name or fuzzy_match(user_name, doc_entity) >= 0.85
+    )
+    for ext in extractions:
+        extracted = ext.get("extracted") or {}
+        if not merged.get("legal_name"):
+            name = as_text(extracted.get("entity_name") or extracted.get("legal_name"))
+            if name:
+                merged["legal_name"] = name
+        if not merged.get("ein") or prefer_docs:
+            ein = _normalize_ein(as_text(extracted.get("ein")))
+            if not ein:
+                match = EIN_IN_TEXT.search(str(extracted))
+                ein = match.group(0) if match else ""
+            if ein and (prefer_docs or not merged.get("ein")):
+                merged["ein"] = ein
+        if not merged.get("operating_address") or prefer_docs:
+            addr = as_text(extracted.get("address"))
+            if addr and (prefer_docs or not merged.get("operating_address")):
+                merged["operating_address"] = addr
+        if not merged.get("state"):
+            st = as_text(extracted.get("incorporation_state") or extracted.get("state"))
+            if len(st) == 2 and st.isalpha():
+                merged["state"] = st.upper()
+            else:
+                addr = as_text(extracted.get("address"))
+                inferred = extract_state_from_address(addr) if addr else None
+                if inferred:
+                    merged["state"] = inferred
+
+    if not merged.get("beneficial_owners") or prefer_docs:
+        owners = _owners_from_extractions(extractions)
+        if owners and (prefer_docs or not merged.get("beneficial_owners")):
+            merged["beneficial_owners"] = owners
+    if not merged.get("control_persons") or prefer_docs:
+        control = _control_from_extractions(extractions)
+        if control and (prefer_docs or not merged.get("control_persons")):
+            merged["control_persons"] = control
+
+    if not merged.get("legal_name"):
+        name = _legal_name_from_extractions(extractions)
+        if name:
+            merged["legal_name"] = name
+    if not merged.get("state"):
+        st = _state_from_extractions(extractions)
+        if st:
+            merged["state"] = st
+    if not merged.get("business_purpose") or prefer_docs:
+        for ext in extractions:
+            extracted = ext.get("extracted") or {}
+            purpose = as_text(extracted.get("business_purpose"))
+            if purpose and (prefer_docs or not merged.get("business_purpose")):
+                merged["business_purpose"] = purpose
+                break
+        if not merged.get("business_purpose") or prefer_docs:
+            purpose = _purpose_from_extractions(extractions)
+            if purpose and (prefer_docs or not merged.get("business_purpose")):
+                merged["business_purpose"] = purpose
+    return merged
+
+
 def build_scorecard(session: dict) -> dict:
     public = _effective_public_facts(session)
-    user = session.get("user_claims") or {}
-    docs = session.get("documents") or []
     extractions = session.get("doc_extractions") or []
+    user = merge_user_claims_from_extractions(session.get("user_claims") or {}, extractions)
+    docs = session.get("documents") or []
 
     raw_checks = [
-        (1, check_legal_name(user.get("legal_name", ""), public.get("legal_name", ""))),
+        (1, check_legal_name(user.get("legal_name", ""), public.get("legal_name", ""), extractions)),
         (2, check_formation_documents(public, docs)),
         (3, check_good_standing(public.get("status"), extractions)),
-        (4, check_ofac(user.get("legal_name", ""))),
+        (4, check_ofac(user.get("legal_name", "") or _legal_name_from_extractions(extractions))),
         (5, check_address(user.get("operating_address", ""), public.get("registered_agent_address"), extractions)),
         (6, check_purpose(user.get("business_purpose", ""), public.get("naics_or_purpose"), extractions)),
         (7, check_ein(user.get("ein", ""), extractions)),
@@ -545,15 +763,18 @@ def build_scorecard(session: dict) -> dict:
     confidence_score = _compute_confidence_score(session, items, kyb_status)
     if kyb_status == "passed" and confidence_score < KYB_CONFIDENCE_FLOOR:
         kyb_status = "flagged"
-        flags = list(flags) + [
-            {
-                "num": 0,
-                "item": "Confidence floor",
-                "result": "FLAG",
-                "detail": f"Confidence {confidence_score:.2f} below minimum {KYB_CONFIDENCE_FLOOR:.2f}",
-                "recommendation": "Improve public record match or supply missing attestations, then resubmit.",
-            }
-        ]
+        floor_item = {
+            "num": 0,
+            "item": "Confidence floor",
+            "availability": "Internal",
+            "useful_for": "Admission threshold",
+            "source": "TBMC policy",
+            "result": "FLAG",
+            "detail": f"Confidence {confidence_score:.2f} below minimum {KYB_CONFIDENCE_FLOOR:.2f}",
+            "recommendation": "Improve public record match or supply missing attestations, then resubmit.",
+        }
+        flags = list(flags) + [floor_item]
+        items = list(items) + [floor_item]
 
     vc = {
         "entity": user.get("legal_name") or public.get("legal_name"),
@@ -582,4 +803,10 @@ def _compute_confidence_score(session: dict, items: list[dict], kyb_status: str)
         base = 1.0 if kyb_status == "passed" else 0.5
     base = float(base)
     skips = sum(1 for i in items if i.get("result") == "SKIP")
-    return round(min(1.0, max(0.0, base - skips * 0.03)), 2)
+    passes = sum(1 for i in items if i.get("result") == "PASS")
+    total = len(items)
+    score = round(min(1.0, max(0.0, base - skips * 0.03)), 2)
+    # Full checklist pass means documents + rules satisfied admission bar.
+    if total > 0 and passes == total:
+        score = max(score, KYB_CONFIDENCE_FLOOR)
+    return score

@@ -1,0 +1,18 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL BOI FILING]
+
+Document category: Beneficial Ownership Certification
+
+Entity Name: Riverstone Holdings LLC
+Federal EIN: 84-7293841
+
+Beneficial Ownership Certification:
+
+Marcus Chen: 100% ownership
+
+All individuals who directly or indirectly own 25% or more of the entity
+are listed above. No other beneficial owners exist as of the certification date.
+
+Certified by: Marcus Chen, Managing Member
+Certification Date: 06/01/2026
+
+[END OF MOCK DOCUMENT]

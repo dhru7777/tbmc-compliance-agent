@@ -1,0 +1,17 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL UTILITY BILL]
+
+Document category: Proof of Business Address
+
+Entity Name: Riverstone Holdings LLC
+
+Business Operating Address:
+251 Little Falls Drive, Wilmington, DE 19808
+
+Document Type: Commercial lease summary (excerpt)
+Leaseholder: Riverstone Holdings LLC
+Landlord: Brandywine Office Partners LLC
+Lease Start Date: 01/01/2024
+
+This address is the principal place of business for Riverstone Holdings LLC.
+
+[END OF MOCK DOCUMENT]

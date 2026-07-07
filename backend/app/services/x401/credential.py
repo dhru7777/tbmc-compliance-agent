@@ -12,6 +12,9 @@ from app.services.x401.signing import sign_canonical_payload, signing_key_id, ve
 
 KYB_EXPIRY_DAYS = int(os.getenv("KYB_EXPIRY_DAYS", "180"))
 CREDIT_LIMIT_FRACTION = float(os.getenv("KYB_CREDIT_LIMIT_FRACTION", "0.20"))
+# Used when the applicant leaves monthly volume blank (avoid $1 → $0.14 credit limits).
+DEFAULT_MONTHLY_VOLUME_LOW = float(os.getenv("KYB_DEFAULT_MONTHLY_VOLUME_LOW", "100000"))
+DEFAULT_MONTHLY_VOLUME_HIGH = float(os.getenv("KYB_DEFAULT_MONTHLY_VOLUME_HIGH", "250000"))
 ISSUER_NAME = "Better Money Company Clearinghouse Compliance Agent"
 
 # Scorecard item numbers → criteria_checked field(s)
@@ -111,10 +114,21 @@ def issue_compliance_credential(
 
     user = session.get("user_claims") or {}
     public = session.get("public_facts") or {}
-    volume_low = float(user.get("monthly_volume_low_usd") or 0)
-    volume_high = float(user.get("monthly_volume_high_usd") or volume_low)
+    raw_low = user.get("monthly_volume_low_usd")
+    raw_high = user.get("monthly_volume_high_usd")
+    volume_declared = bool(raw_low or raw_high)
+    try:
+        volume_low = float(raw_low) if raw_low not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        volume_low = 0.0
+    try:
+        volume_high = float(raw_high) if raw_high not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        volume_high = 0.0
     if volume_low <= 0:
-        volume_low = 1.0
+        volume_low = DEFAULT_MONTHLY_VOLUME_LOW
+    if volume_high <= 0:
+        volume_high = DEFAULT_MONTHLY_VOLUME_HIGH if not volume_declared else volume_low
     if volume_high < volume_low:
         volume_high = volume_low
 
@@ -143,6 +157,7 @@ def issue_compliance_credential(
         "declared_monthly_volume_usd": {
             "low": volume_low,
             "high": volume_high,
+            "declared_by_applicant": volume_declared,
         },
         "criteria_checked": _criteria_checked(scorecard),
         "allowed_scope": {

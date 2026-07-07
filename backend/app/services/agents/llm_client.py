@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 SEARCH_INPUT_BUDGET = int(os.getenv("KYB_SEARCH_INPUT_BUDGET", "1500"))
-SEARCH_OUTPUT_MAX = int(os.getenv("KYB_SEARCH_OUTPUT_MAX", "500"))
+SEARCH_OUTPUT_MAX = int(os.getenv("KYB_SEARCH_OUTPUT_MAX", "300"))
 PLANNER_OUTPUT_MAX = int(os.getenv("KYB_PLANNER_OUTPUT_MAX", "600"))
 DOC_EXTRACT_OUTPUT_MAX = int(os.getenv("KYB_DOC_EXTRACT_OUTPUT_MAX", "512"))
 DEFAULT_MODEL = os.getenv("KYB_LLM_MODEL", "claude-sonnet-4-6")

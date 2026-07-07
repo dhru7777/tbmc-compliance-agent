@@ -1,0 +1,19 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL IRS LETTER]
+
+Document category: EIN Confirmation Letter (CP 575)
+
+INTERNAL REVENUE SERVICE
+EMPLOYER IDENTIFICATION NUMBER ASSIGNMENT
+
+Entity Name: Riverstone Holdings LLC
+Federal EIN: 84-7293841
+
+Responsible Party: Marcus Chen
+Mailing Address: 251 Little Falls Drive, Wilmington, DE 19808
+
+Date Issued: 03/22/2021
+
+This letter confirms the Employer Identification Number assigned to the
+above-named entity for federal tax purposes.
+
+[END OF MOCK DOCUMENT]

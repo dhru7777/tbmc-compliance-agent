@@ -1,0 +1,15 @@
+[MOCK DOCUMENT — FOR PROTOTYPE TESTING ONLY — NOT A REAL FILING]
+
+Document category: Business Purpose Statement
+
+Entity Name: Riverstone Holdings LLC
+State of Formation: DE
+
+Business Purpose: Commercial real estate holding and property management services
+
+The company acquires, holds, and manages commercial real estate assets and
+provides property management services to affiliated and third-party owners.
+
+NAICS Category: 531312 — Nonresidential Property Managers
+
+[END OF MOCK DOCUMENT]

@@ -10,8 +10,8 @@ from app.services.llm_usage import UsageSession
 def _with_labels(decision: dict) -> dict:
     action = decision.get("action", "finish")
     reason = decision.get("reason") or ""
-    decision.setdefault("think_label", short_words(decision.get("think_label") or reason, 4))
-    decision.setdefault("act_label", short_words(decision.get("act_label") or act_label_for_action(action), 4))
+    decision.setdefault("think_label", short_words(decision.get("think_label") or reason, 6))
+    decision.setdefault("act_label", short_words(decision.get("act_label") or act_label_for_action(action), 6))
     return decision
 
 
@@ -129,14 +129,14 @@ RULES:
 - action "need_internal" if search would help but legal_name or state is missing — list missing_for_search.
 - action "finish" if public_facts already sufficient or no further public steps help.
 - public_query may ONLY contain legal_name and state (2-letter). NEVER include EIN, addresses, owner names.
-- think_label and act_label MUST be your own 2-4 word phrases (not copied from rules).
+- think_label and act_label MUST be clear 5-6 word English phrases describing the action.
 
 Return JSON only:
 {{
   "action": "skip_search|public_search|need_internal|finish",
   "reason": "one sentence for audit log",
-  "think_label": "2-4 words: why you chose this",
-  "act_label": "2-4 words: what happens next",
+  "think_label": "5-6 words: why you chose this",
+  "act_label": "5-6 words: what happens next",
   "public_query": {{"legal_name": "...", "state": "DE"}} or null,
   "missing_for_search": []
 }}"""

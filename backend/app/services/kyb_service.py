@@ -1,13 +1,17 @@
 """KYB session orchestration: upload → VERIFY (AI + deterministic) → x401 → credential store."""
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 
-from app.services import credential_store, demo_companies, kyb_rules, llm_search, md_recorder, session_store, verify_service, x401_service
+from app.services import credential_store, demo_companies, kyb_rules, md_recorder, session_store, verify_service, x401_service
+from app.services.agents import kyb_coach, public_search
 from app.services.verification_store import save_verification_record
 
 _sessions: dict[str, dict] = {}
+
+AGENT_CHAT_ENABLED = os.getenv("KYB_AGENT_CHAT_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
 def _now() -> str:
@@ -27,6 +31,138 @@ def _get_session(session_id: str) -> dict:
 def _persist(session: dict) -> None:
     _sessions[session["session_id"]] = session
     session_store.save_session(session)
+
+
+def _store_uploads(session_id: str, uploads: list[tuple[str, str, bytes]]) -> None:
+    for _label, filename, content in uploads:
+        session_store.save_upload(session_id, filename, content)
+
+
+def _merge_upload_lists(
+    incoming: list[tuple[str, str, bytes]],
+    stored: list[tuple[str, str, bytes]],
+) -> list[tuple[str, str, bytes]]:
+    by_name = {fn: (label, fn, content) for label, fn, content in stored}
+    for label, fn, content in incoming:
+        by_name[fn] = (label, fn, content)
+    return list(by_name.values())
+
+
+def _append_verify_attempt(session: dict, verify_result: dict, uploads: list) -> None:
+    attempts = list(session.get("verify_attempts") or [])
+    sc = (verify_result.get("deterministic") or {}).get("scorecard") or {}
+    attempts.append(
+        {
+            "attempt": len(attempts) + 1,
+            "at": _now(),
+            "pipeline_status": verify_result.get("pipeline_status") or verify_result.get("stage"),
+            "documents_count": len(uploads),
+            "kyb_status": sc.get("kyb_status"),
+            "flags_count": sc.get("flags_count"),
+            "document_gaps": verify_result.get("document_gaps"),
+        }
+    )
+    session["verify_attempts"] = attempts[-20:]
+
+
+async def extract_documents_preview(
+    session_id: str,
+    uploads: list[tuple[str, str, bytes]],
+    trial_company_id: str | None = None,
+) -> dict:
+    """Extract structured claims from uploads and merge into session (for form auto-fill)."""
+    from app.services.agents import doc_extractor
+    from app.services.agents.trace import AgentTrace
+    from app.services.demo_companies import is_trial_document_text, match_trial_company_id, resolve_trial_company_id
+
+    session = _get_session(session_id)
+    trace = AgentTrace()
+    trial_id = resolve_trial_company_id(trial_company_id) or session.get("trial_company_id")
+
+    if not trial_id:
+        for _label, filename, content in uploads:
+            text = doc_extractor.extract_text_from_upload(filename, content)
+            if is_trial_document_text(text):
+                trial_id = match_trial_company_id(text)
+                if trial_id:
+                    break
+
+    if trial_id:
+        session["trial_company_id"] = trial_id
+
+    prior = list(session.get("doc_extractions") or [])
+    doc_extractions = await doc_extractor.extract_uploads_merged(
+        uploads, prior, trace, usage_session=None, trial_company_id=trial_id
+    )
+
+    _store_uploads(session_id, uploads)
+
+    user = session.get("user_claims") or {}
+    merged = kyb_rules.merge_user_claims_from_extractions(user, doc_extractions)
+
+    session["user_claims"] = merged
+    session["documents"] = [{"label": d.get("label"), "filename": d.get("filename")} for d in doc_extractions]
+    session["doc_extractions"] = [
+        {
+            "label": d.get("label"),
+            "filename": d.get("filename"),
+            "extracted": d.get("extracted", {}),
+            "text_length": d.get("text_length", 0),
+            "content_hash": d.get("content_hash"),
+            "note": d.get("note"),
+        }
+        for d in doc_extractions
+    ]
+    session["updated_at"] = _now()
+    _persist(session)
+
+    warnings: list[str] = []
+    for ext in doc_extractions:
+        if ext.get("text_length", 0) == 0:
+            warnings.append(f"No readable text in {ext.get('filename') or ext.get('label')} — use text PDFs or .txt")
+        elif not (ext.get("extracted") or {}):
+            warnings.append(f"Could not parse {ext.get('filename') or ext.get('label')}")
+
+    field_sources: dict[str, str] = {}
+    for ext in doc_extractions:
+        extracted = ext.get("extracted") or {}
+        source = ext.get("filename") or ext.get("label") or "document"
+        if extracted.get("entity_name") and not field_sources.get("legal_name"):
+            field_sources["legal_name"] = source
+        if extracted.get("ein") and not field_sources.get("ein"):
+            field_sources["ein"] = source
+        if extracted.get("address") and not field_sources.get("operating_address"):
+            field_sources["operating_address"] = source
+        if extracted.get("incorporation_state") and not field_sources.get("state"):
+            field_sources["state"] = source
+        for fact in extracted.get("key_facts") or []:
+            if "business purpose:" in str(fact).lower() and not field_sources.get("business_purpose"):
+                field_sources["business_purpose"] = source
+        if extracted.get("beneficial_owners") and not field_sources.get("beneficial_owners"):
+            field_sources["beneficial_owners"] = source
+        if extracted.get("control_persons") and not field_sources.get("control_persons"):
+            field_sources["control_persons"] = source
+
+    session["updated_at"] = _now()
+    _persist(session)
+
+    return {
+        "session_id": session_id,
+        "document_count": len(doc_extractions),
+        "suggested_claims": {
+            "legal_name": merged.get("legal_name") or "",
+            "state": merged.get("state") or "",
+            "ein": merged.get("ein") or "",
+            "operating_address": merged.get("operating_address") or "",
+            "business_purpose": merged.get("business_purpose") or "",
+            "beneficial_owners": merged.get("beneficial_owners") or [],
+            "control_persons": merged.get("control_persons") or [],
+        },
+        "field_sources": field_sources,
+        "extractions": session["doc_extractions"],
+        "warnings": warnings,
+        "chat_messages": session.get("chat_messages") or [],
+    }
 
 
 async def create_session() -> dict:
@@ -53,11 +189,18 @@ async def create_session() -> dict:
         "documents": [],
         "doc_extractions": [],
         "middesk": None,
+        "pipeline_status": "draft",
+        "document_gaps": None,
+        "verify_attempts": [],
+        "last_scorecard": None,
+        "chat_messages": [],
+        "objective_status": kyb_coach.OBJECTIVE_IN_PROGRESS,
+        "coach_last_message": "",
     }
     _persist(session)
     md_recorder.init_session(session_id, "(pending)", "—")
     md_recorder.append_step(session_id, "Session started", ["- Awaiting user details…"])
-    return {"session_id": session_id}
+    return {"session_id": session_id, "chat_messages": session.get("chat_messages") or []}
 
 
 async def refresh_public_search(
@@ -93,7 +236,14 @@ async def refresh_public_search(
         session["search_status"] = "done"
     else:
         session["search_status"] = "searching"
-        public_facts = await llm_search.search_company_public_info(legal_name, state_code)
+        trial_id = session.get("trial_company_id")
+        if trial_id:
+            search_result = await public_search.run_trial_registry_search(
+                trial_id, legal_name, state_code
+            )
+        else:
+            search_result = await public_search.run_bounded_search(legal_name, state_code)
+        public_facts = search_result.get("public_facts") or {}
         session["public_facts"] = public_facts
         session["public_facts_confirmed"] = not public_facts.get("needs_user_confirm", True)
         session["_last_search_name"] = name_key
@@ -250,17 +400,26 @@ async def run_verify_only(
 def _log_verify_session(session_id: str, verify_result: dict) -> None:
     ai = verify_result.get("ai", {})
     det = verify_result.get("deterministic", {})
-    sc = det.get("scorecard", {})
-    md_recorder.append_step(
-        session_id,
-        "VERIFY — Agentic pipeline",
-        [
-            f"- Public search performed: {verify_result.get('search_performed', False)}",
-            f"- Documents parsed: {ai.get('documents', {}).get('count', 0)}",
-            f"- KYB status: {sc.get('kyb_status', 'unknown')}",
-            f"- Flags: {sc.get('flags_count', 0)}, Blocks: {sc.get('blocks_count', 0)}",
-        ],
-    )
+    sc = det.get("scorecard") or {}
+    status = verify_result.get("pipeline_status") or verify_result.get("stage", "verify")
+    lines = [
+        f"- Pipeline status: {status}",
+        f"- Public search performed: {verify_result.get('search_performed', False)}",
+        f"- Documents parsed: {ai.get('documents', {}).get('count', 0)}",
+    ]
+    if sc:
+        lines.extend(
+            [
+                f"- KYB status: {sc.get('kyb_status', 'unknown')}",
+                f"- Flags: {sc.get('flags_count', 0)}, Blocks: {sc.get('blocks_count', 0)}",
+            ]
+        )
+    gaps_info = verify_result.get("document_gaps") or {}
+    if gaps_info.get("missing_documents"):
+        lines.append("- Missing documents requested:")
+        for md in gaps_info["missing_documents"]:
+            lines.append(f"  - {md.get('label', md.get('document_type'))}: {md.get('reason', '')}")
+    md_recorder.append_step(session_id, "VERIFY — Agentic pipeline", lines)
     for step in verify_result.get("agent_trace", []):
         md_recorder.append_step(
             session_id,
@@ -292,32 +451,88 @@ async def submit_kyb(
     on_step=None,
 ) -> dict:
     session = _get_session(session_id)
+    claims = session.setdefault("user_claims", {})
     if legal_name:
-        session["user_claims"]["legal_name"] = legal_name
+        claims["legal_name"] = legal_name
     if state:
-        session["user_claims"]["state"] = state.upper()
-    session["user_claims"].update(
-        {
-            "ein": ein,
-            "operating_address": operating_address,
-            "business_purpose": business_purpose,
-            "beneficial_owners": beneficial_owners,
-            "control_persons": control_persons,
-        }
-    )
+        claims["state"] = state.upper()
+    if ein:
+        claims["ein"] = kyb_rules._normalize_ein(ein)
+    if operating_address:
+        claims["operating_address"] = operating_address
+    if business_purpose:
+        claims["business_purpose"] = business_purpose
+    if beneficial_owners:
+        claims["beneficial_owners"] = beneficial_owners
+    if control_persons:
+        claims["control_persons"] = control_persons
     if monthly_volume_low_usd is not None:
         session["user_claims"]["monthly_volume_low_usd"] = monthly_volume_low_usd
     if monthly_volume_high_usd is not None:
         session["user_claims"]["monthly_volume_high_usd"] = monthly_volume_high_usd
     session["trial_company_id"] = demo_companies.resolve_trial_company_id(trial_company_id)
-    session["public_facts"] = None
+    if session.get("pipeline_status") != "needs_documents":
+        session["public_facts"] = None
+
+    stored = session_store.load_stored_uploads(session_id)
+    uploads = _merge_upload_lists(uploads, stored)
+    for _label, filename, content in uploads:
+        from app.services.agents import doc_extractor
+        from app.services.demo_companies import is_mock_package_document
+
+        if is_mock_package_document(doc_extractor.extract_text_from_upload(filename, content)):
+            session["trial_company_id"] = None
+            break
+    _store_uploads(session_id, uploads)
 
     verify_result = await verify_service.run_verify(session, uploads, on_step=on_step)
     _log_verify_session(session_id, verify_result)
+    _append_verify_attempt(session, verify_result, uploads)
+    session["updated_at"] = _now()
+
+    event = "verify_needs_documents" if verify_result.get("pipeline_status") == "needs_documents" else "verify_complete"
+    coach = None
+    if AGENT_CHAT_ENABLED:
+        coach = kyb_coach.generate_coach_turn(
+            session=session, event=event, verify_result=verify_result
+        )
+        kyb_coach.append_chat(session, coach)
+    _persist(session)
+
+    if verify_result.get("pipeline_status") == "needs_documents":
+        gaps_payload = verify_result.get("document_gaps") or {}
+        missing = gaps_payload.get("missing_documents") or []
+        missing_line = ", ".join(
+            str(m.get("label") or m.get("document_type") or "document") for m in missing[:4]
+        )
+        md_recorder.append_step(
+            session_id,
+            "Awaiting additional documents",
+            [
+                f"- Missing: {missing_line or 'see chat'}",
+                f"- Attempt #{len(session.get('verify_attempts') or [])}",
+            ],
+        )
+        return {
+            "session_id": session_id,
+            "pipeline_status": "needs_documents",
+            "document_gaps": gaps_payload,
+            "scorecard": None,
+            "credential": None,
+            "credential_url": None,
+            "certificate_pdf_url": None,
+            "public_facts": session.get("public_facts"),
+            "search_performed": verify_result.get("search_performed", False),
+            "agent_trace": verify_result.get("agent_trace", []),
+            "cost_analysis": verify_result.get("cost_analysis", {}),
+            "record_url": f"/api/enterprise/kyb/{session_id}/record",
+            "verify_attempts": session.get("verify_attempts") or [],
+            "chat_messages": session.get("chat_messages") or [],
+            "coach_turn": coach,
+            "objective_status": session.get("objective_status"),
+        }
 
     scorecard = verify_result["deterministic"]["scorecard"]
-    session["updated_at"] = _now()
-    _persist(session)
 
     search_note = (
         "Public search performed"
@@ -405,15 +620,77 @@ async def submit_kyb(
         "cost_analysis": verify_result.get("cost_analysis", {}),
         "middesk": session.get("middesk"),
         "record_url": f"/api/enterprise/kyb/{session_id}/record",
+        "verify_attempts": session.get("verify_attempts") or [],
+        "pipeline_status": session.get("pipeline_status"),
+        "chat_messages": session.get("chat_messages") or [],
+        "coach_turn": coach,
+        "objective_status": session.get("objective_status"),
+    }
+
+
+async def post_chat_message(session_id: str, message: str) -> dict:
+    """User message in coach chat bar — agent responds until objective achieved."""
+    if not AGENT_CHAT_ENABLED:
+        return {
+            "session_id": session_id,
+            "chat_messages": [],
+            "coach_turn": None,
+            "objective_status": kyb_coach.OBJECTIVE_IN_PROGRESS,
+        }
+    session = _get_session(session_id)
+    if message.strip():
+        kyb_coach.append_chat(
+            session,
+            {"role": "user", "message": message.strip(), "at": _now(), "event": "user_message"},
+        )
+    coach = kyb_coach.generate_coach_turn(
+        session=session, event="user_message", user_message=message.strip() or None
+    )
+    kyb_coach.append_chat(session, coach)
+    session["updated_at"] = _now()
+    _persist(session)
+    md_recorder.append_step(
+        session_id,
+        "Coach chat",
+        [f"- User: {message[:200]}", f"- Agent: {(coach or {}).get('message', '')[:300]}"],
+    )
+    return {
+        "session_id": session_id,
+        "chat_messages": session.get("chat_messages") or [],
+        "coach_turn": coach,
+        "objective_status": session.get("objective_status"),
     }
 
 
 def get_session_summary(session_id: str) -> dict:
     session = _get_session(session_id)
+    user = session.get("user_claims") or {}
     return {
         "session_id": session_id,
         "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
         "has_public_facts": bool(session.get("public_facts")),
+        "pipeline_status": session.get("pipeline_status", "draft"),
+        "document_gaps": session.get("document_gaps"),
+        "verify_attempts": session.get("verify_attempts") or [],
+        "documents": session.get("documents") or [],
+        "doc_extractions_count": len(session.get("doc_extractions") or []),
+        "user_claims": {
+            "legal_name": user.get("legal_name", ""),
+            "state": user.get("state", ""),
+            "ein": user.get("ein", ""),
+            "operating_address": user.get("operating_address", ""),
+            "business_purpose": user.get("business_purpose", ""),
+            "beneficial_owners": user.get("beneficial_owners") or [],
+            "control_persons": user.get("control_persons") or [],
+            "monthly_volume_low_usd": user.get("monthly_volume_low_usd"),
+            "monthly_volume_high_usd": user.get("monthly_volume_high_usd"),
+        },
+        "last_scorecard_status": (session.get("last_scorecard") or {}).get("kyb_status"),
+        "record_url": f"/api/enterprise/kyb/{session_id}/record",
+        "chat_messages": session.get("chat_messages") or [],
+        "objective_status": session.get("objective_status"),
+        "coach_last_message": session.get("coach_last_message", ""),
     }
 
 
