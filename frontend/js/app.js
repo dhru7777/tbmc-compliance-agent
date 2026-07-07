@@ -158,41 +158,103 @@ function renderAuditTrail(attempts) {
 
 let networkTabEnabled = false;
 
-const NETWORK_HUB = { id: "tbmc", label: "TBMC", sub: "Clearinghouse", r: 48 };
-const NETWORK_RING = { cx: 300, cy: 238, radius: 168 };
-const NETWORK_PEERS = [
-  { id: "issuer-atlas", label: "Atlas Stable Mint", sub: "Issuer", r: 32, kind: "issuer" },
-  { id: "issuer-harbor", label: "Harbor Reserve", sub: "Issuer", r: 32, kind: "issuer" },
-  { id: "biz-clearline", label: "Clearline Treasury", sub: "Business", r: 30, kind: "business" },
-  { id: "biz-summit", label: "Summit Pay", sub: "Business", r: 30, kind: "business" },
+const NETWORK_VIEW = { w: 600, h: 420 };
+const NETWORK_VOLUME_MAX_M = 520;
+const NETWORK_STATIC_NODES = [
+  { id: "tbmc", label: "TBMC", kind: "hub", volumeM: 520, x: 300, y: 210 },
+  { id: "bridge-pacific", label: "Pacific Bridge", kind: "bridge", volumeM: 210, x: 188, y: 168 },
+  { id: "bridge-north", label: "Northwind", kind: "bridge", volumeM: 165, x: 412, y: 168 },
+  { id: "issuer-atlas", label: "Atlas Stable Mint", kind: "issuer", volumeM: 182, x: 78, y: 108 },
+  { id: "issuer-harbor", label: "Harbor Reserve", kind: "issuer", volumeM: 124, x: 108, y: 268 },
+  { id: "issuer-prism", label: "Prism Dollar", kind: "issuer", volumeM: 96, x: 498, y: 108 },
+  { id: "issuer-summit", label: "Summit Coin", kind: "issuer", volumeM: 71, x: 522, y: 268 },
+  { id: "issuer-meridian", label: "Meridian USDC", kind: "issuer", volumeM: 58, x: 248, y: 72 },
+  { id: "issuer-cedar", label: "Cedar Trust", kind: "issuer", volumeM: 41, x: 352, y: 72 },
+  { id: "biz-clearline", label: "Clearline Treasury", kind: "business", volumeM: 88, x: 72, y: 188 },
+  { id: "biz-summit", label: "Summit Pay", kind: "business", volumeM: 64, x: 528, y: 188 },
+  { id: "biz-redwood", label: "Redwood Commerce", kind: "business", volumeM: 47, x: 168, y: 318 },
+  { id: "biz-borealis", label: "Borealis FX", kind: "business", volumeM: 36, x: 432, y: 318 },
+  { id: "biz-nexbridge", label: "Nexbridge Capital", kind: "business", volumeM: 29, x: 300, y: 338 },
 ];
-const NEW_MEMBER_RING_INDEX = 2;
+const NETWORK_LINKS = [
+  ["tbmc", "bridge-pacific"],
+  ["tbmc", "bridge-north"],
+  ["bridge-pacific", "bridge-north"],
+  ["tbmc", "issuer-meridian"],
+  ["tbmc", "issuer-cedar"],
+  ["tbmc", "biz-nexbridge"],
+  ["bridge-pacific", "issuer-atlas"],
+  ["bridge-pacific", "issuer-harbor"],
+  ["bridge-pacific", "biz-clearline"],
+  ["bridge-north", "issuer-prism"],
+  ["bridge-north", "issuer-summit"],
+  ["bridge-north", "biz-summit"],
+  ["issuer-atlas", "biz-clearline"],
+  ["issuer-harbor", "biz-redwood"],
+  ["issuer-prism", "biz-summit"],
+  ["tbmc", "issuer-atlas"],
+  ["tbmc", "issuer-prism"],
+];
 
-function ringPosition(index, total, radius, cx, cy) {
-  const angle = -Math.PI / 2 + (2 * Math.PI * index) / total;
-  return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+function networkNodeRadius(volumeM) {
+  const t = Math.sqrt(Math.max(volumeM, 8) / NETWORK_VOLUME_MAX_M);
+  return Math.round((11 + t * 24) * 10) / 10;
 }
 
-function layoutNetworkNodes(company) {
-  const hub = { ...NETWORK_HUB, ...NETWORK_RING, x: NETWORK_RING.cx, y: NETWORK_RING.cy };
+function formatNetworkVolume(volumeM) {
+  const m = Number(volumeM);
+  if (!Number.isFinite(m)) return "—";
+  if (m >= 1000) return `$${(m / 1000).toFixed(1)}B/mo`;
+  return `$${Math.round(m)}M/mo`;
+}
+
+function networkKindLabel(kind) {
+  return (
+    {
+      hub: "Clearinghouse",
+      bridge: "Bridge hub",
+      issuer: "Issuer",
+      business: "Business",
+      new: "New member",
+    }[kind] || "Member"
+  );
+}
+
+function getNewMemberVolumeM(data) {
+  const rec = data?.verification_record;
+  const low =
+    rec?.monthly_volume_low_usd ??
+    parseFloat(document.getElementById("kyb_monthly_volume_low_usd")?.value || "");
+  const high =
+    rec?.monthly_volume_high_usd ??
+    parseFloat(document.getElementById("kyb_monthly_volume_high_usd")?.value || "");
+  if (Number.isFinite(low) && Number.isFinite(high) && high > 0) {
+    return Math.max(8, Math.round((low + high) / 2 / 1_000_000));
+  }
+  return 175;
+}
+
+function layoutNetworkNodes(company, data) {
   const newMember = {
     id: "new-member",
-    label: truncateLabel(company, 20),
-    sub: "New member",
+    label: truncateLabel(company, 18),
     kind: "new",
-    r: 36,
+    volumeM: getNewMemberVolumeM(data),
+    x: 300,
+    y: 118,
   };
-  const members = [...NETWORK_PEERS];
-  members.splice(NEW_MEMBER_RING_INDEX, 0, newMember);
+  newMember.r = networkNodeRadius(newMember.volumeM);
 
-  members.forEach((node, index) => {
-    const pos = ringPosition(index, members.length, NETWORK_RING.radius, NETWORK_RING.cx, NETWORK_RING.cy);
-    node.x = pos.x;
-    node.y = pos.y;
-    node.ringIndex = index;
-  });
+  const nodes = NETWORK_STATIC_NODES.map((n) => ({
+    ...n,
+    r: networkNodeRadius(n.volumeM),
+  }));
+  nodes.push(newMember);
 
-  return { hub, members, newMember };
+  const hub = nodes.find((n) => n.id === "tbmc");
+  const members = nodes.filter((n) => n.id !== "tbmc");
+
+  return { hub, members, newMember, nodes };
 }
 
 function setNetworkTabEnabled(enabled) {
@@ -210,6 +272,53 @@ function truncateLabel(text, max = 22) {
   return `${t.slice(0, max - 1)}…`;
 }
 
+function networkLinkPath(x1, y1, x2, y2, r1, r2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const sx = x1 + ux * (r1 + 2);
+  const sy = y1 + uy * (r1 + 2);
+  const ex = x2 - ux * (r2 + 2);
+  const ey = y2 - uy * (r2 + 2);
+  return `M ${sx} ${sy} L ${ex} ${ey}`;
+}
+
+function bindNetworkGraphHover(wrap) {
+  const tip = wrap.querySelector(".network-graph-tooltip");
+  const nodes = wrap.querySelectorAll(".network-graph .node[data-volume]");
+  if (!tip || !nodes.length) return;
+
+  const hide = () => {
+    tip.hidden = true;
+    nodes.forEach((n) => n.classList.remove("is-hovered"));
+  };
+
+  nodes.forEach((node) => {
+    node.addEventListener("mouseenter", () => {
+      const label = node.getAttribute("data-label") || "";
+      const kind = node.getAttribute("data-kind") || "";
+      const volumeM = node.getAttribute("data-volume") || "";
+      tip.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(networkKindLabel(kind))} · ${escapeHtml(formatNetworkVolume(volumeM))} USDC</span>`;
+      tip.hidden = false;
+      node.classList.add("is-hovered");
+    });
+    node.addEventListener("mousemove", (e) => {
+      const rect = wrap.getBoundingClientRect();
+      const x = e.clientX - rect.left + 12;
+      const y = e.clientY - rect.top + 12;
+      const maxX = rect.width - tip.offsetWidth - 8;
+      const maxY = rect.height - tip.offsetHeight - 8;
+      tip.style.left = `${Math.min(Math.max(8, x), maxX)}px`;
+      tip.style.top = `${Math.min(Math.max(8, y), maxY)}px`;
+    });
+    node.addEventListener("mouseleave", hide);
+  });
+
+  wrap.addEventListener("mouseleave", hide);
+}
+
 function renderNetworkGraph(data) {
   const wrap = document.getElementById("network-graph-wrap");
   const subtitle = document.getElementById("network-panel-subtitle");
@@ -224,88 +333,79 @@ function renderNetworkGraph(data) {
   const c4Id = data?.layered_credentials?.credentials?.C4?.credential_id;
   const shortC4 = c4Id ? `${c4Id.slice(0, 8)}…` : "";
 
-  const { hub, members, newMember } = layoutNetworkNodes(company);
+  const { newMember, nodes } = layoutNetworkNodes(company, data);
+  const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]));
 
   if (subtitle) {
-    subtitle.textContent = `${company} has been admitted to the TBMC clearinghouse — connected to issuers, businesses, and settlement routes.`;
+    subtitle.textContent = `${company} admitted to the TBMC clearinghouse. Node size reflects monthly settlement volume.`;
   }
 
-  function linkPath(x1, y1, x2, y2, r1, r2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ux = dx / dist;
-    const uy = dy / dist;
-    const sx = x1 + ux * (r1 + 4);
-    const sy = y1 + uy * (r1 + 4);
-    const ex = x2 - ux * (r2 + 6);
-    const ey = y2 - uy * (r2 + 6);
-    return `M ${sx} ${sy} L ${ex} ${ey}`;
-  }
+  const extraLinks = [
+    ["new-member", "tbmc"],
+    ["new-member", "bridge-north"],
+    ["new-member", "issuer-meridian"],
+  ];
+  const allLinks = [...NETWORK_LINKS, ...extraLinks];
 
-  function hubLink(peer, isNew) {
-    const d = linkPath(hub.x, hub.y, peer.x, peer.y, hub.r, peer.r);
-    if (isNew) {
-      return `<path class="link link-new" d="${d}"/><path class="link-new-flow" d="${d}"/>`;
-    }
-    return `<path class="link" d="${d}"/><path class="link-flow" d="${d}"/>`;
-  }
-
-  function ringTouchesNew(index, total) {
-    const prev = (index - 1 + total) % total;
-    const next = (index + 1) % total;
-    return index === newMember.ringIndex || prev === newMember.ringIndex || next === newMember.ringIndex;
-  }
-
-  const hubLinks = members.map((peer) => hubLink(peer, peer.id === newMember.id)).join("");
-
-  const ringLinks = members
-    .map((peer, index) => {
-      const next = members[(index + 1) % members.length];
-      const d = linkPath(peer.x, peer.y, next.x, next.y, peer.r, next.r);
-      const isNewSegment = ringTouchesNew(index, members.length);
-      const cls = isNewSegment ? "link link-ring link-ring-new" : "link link-ring";
+  const links = allLinks
+    .map(([a, b]) => {
+      const na = nodeById[a];
+      const nb = nodeById[b];
+      if (!na || !nb) return "";
+      const touchesNew = a === "new-member" || b === "new-member";
+      const touchesHub = a === "tbmc" || b === "tbmc";
+      const cls = ["link", touchesNew ? "link-new" : touchesHub ? "link-hub" : ""].filter(Boolean).join(" ");
+      const d = networkLinkPath(na.x, na.y, nb.x, nb.y, na.r, nb.r);
       return `<path class="${cls}" d="${d}"/>`;
     })
     .join("");
 
-  const allNodes = [hub, ...members];
-  const nodes = allNodes
+  const nodeMarkup = nodes
     .map((n) => {
-      const cls = ["node", n.kind || (n.id === "tbmc" ? "hub" : "")].filter(Boolean).join(" ");
-      const lines = _wrapSvgLabel(n.label, 14);
-      const lineOffset = ((lines.length - 1) * 6) / 2;
-      const textY = n.y + (n.sub ? -2 : 4) + lineOffset;
-      const subY = textY + 14 + (lines.length - 1) * 10;
+      const kindClass = n.kind === "new" ? "new" : n.kind || "";
       const joinClass = n.id === newMember.id ? " node-joining" : "";
-      return `<g class="${cls}${joinClass}">
-        <circle cx="${n.x}" cy="${n.y}" r="${n.r}"/>
-        ${lines.map((line, i) => `<text x="${n.x}" y="${textY + i * 11}" class="node-label">${escapeHtml(line)}</text>`).join("")}
-        ${n.sub ? `<text x="${n.x}" y="${subY}" class="node-type">${escapeHtml(n.sub)}</text>` : ""}
+      const lines = _wrapSvgLabel(n.label, 12);
+      const labelY = n.y + n.r + 13 + (lines.length > 1 ? 0 : 0);
+      const glow = n.kind === "new" ? ' filter="url(#network-member-glow)"' : "";
+      return `<g class="node ${kindClass}${joinClass}" data-label="${escapeHtml(n.label)}" data-kind="${n.kind}" data-volume="${n.volumeM}" tabindex="0" role="img" aria-label="${escapeHtml(n.label)} ${escapeHtml(formatNetworkVolume(n.volumeM))}">
+        <circle class="node-hit" cx="${n.x}" cy="${n.y}" r="${n.r + 5}" fill="transparent"/>
+        <circle class="node-circle" cx="${n.x}" cy="${n.y}" r="${n.r}"${glow}/>
+        ${lines.map((line, i) => `<text x="${n.x}" y="${labelY + i * 10}" class="node-label">${escapeHtml(line)}</text>`).join("")}
       </g>`;
     })
     .join("");
 
-  wrap.innerHTML = `<svg class="network-graph" viewBox="0 0 600 460" role="img" aria-label="TBMC clearinghouse network with connected members">
-    <circle class="network-ring-guide" cx="${NETWORK_RING.cx}" cy="${NETWORK_RING.cy}" r="${NETWORK_RING.radius}" />
-    ${ringLinks}
-    ${hubLinks}
-    ${nodes}
-  </svg>`;
+  wrap.innerHTML = `<div class="network-graph-tooltip" hidden></div>
+    <svg class="network-graph" viewBox="0 0 ${NETWORK_VIEW.w} ${NETWORK_VIEW.h}" role="img" aria-label="TBMC clearinghouse network">
+      <defs>
+        <filter id="network-member-glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <g class="network-links">${links}</g>
+      <g class="network-nodes">${nodeMarkup}</g>
+    </svg>`;
+
+  bindNetworkGraphHover(wrap);
 
   if (legend) {
     legend.innerHTML = `
-      <span class="network-legend-item"><span class="network-legend-swatch hub"></span> TBMC clearinghouse</span>
-      <span class="network-legend-item"><span class="network-legend-swatch new"></span> New member</span>
+      <span class="network-legend-item"><span class="network-legend-swatch hub"></span> Clearinghouse</span>
+      <span class="network-legend-item"><span class="network-legend-swatch bridge"></span> Bridge</span>
       <span class="network-legend-item"><span class="network-legend-swatch issuer"></span> Issuer</span>
       <span class="network-legend-item"><span class="network-legend-swatch business"></span> Business</span>
-      <span class="network-legend-item">— gold = USDC via hub · ring = shared network</span>`;
+      <span class="network-legend-item"><span class="network-legend-swatch new"></span> New member</span>
+      <span class="network-legend-item network-legend-hint">Hover a node for volume</span>`;
   }
 
   if (note) {
     note.textContent = c4Id
-      ? `${company} is on the clearinghouse ring with ${NETWORK_PEERS.length} existing members. Settlement and proof-of-ownership route through TBMC using master credential C4 (${shortC4}).`
-      : `Members connect on a shared clearinghouse ring. TBMC routes USDC settlement between issuers and businesses. Complete verification to admit a new node.`;
+      ? `${company} routes settlement through TBMC with ${NETWORK_STATIC_NODES.length - 1} existing members. Master credential C4: ${shortC4}.`
+      : `Node size reflects monthly USDC volume. Complete verification to admit a new glowing member node.`;
   }
 }
 
@@ -926,6 +1026,8 @@ function resetChecklistPending() {
 function resetCertificatePanel() {
   networkAdmissionGranted = false;
   lastSubmitResult = null;
+  certificatePdfBytes = null;
+  document.getElementById("agent-cost-popover-portal")?.remove();
   const layout = document.getElementById("scorecard-layout");
   const column = document.getElementById("certificate-column");
   const inner = document.getElementById("certificate-column-inner");
@@ -958,24 +1060,57 @@ const CERTIFICATE_TABS = [
 ];
 
 let certificateZoom = 1;
-let certificateBlobUrl = null;
+let certificatePdfBytes = null;
 const CERT_ZOOM_MIN = 0.5;
 const CERT_ZOOM_MAX = 2.5;
 const CERT_ZOOM_STEP = 0.12;
-const CERT_FRAME_BASE_HEIGHT = 720;
+const CERT_PDF_BASE_SCALE = 1.35;
 
-function revokeCertificateBlobUrl() {
-  if (certificateBlobUrl) {
-    URL.revokeObjectURL(certificateBlobUrl);
-    certificateBlobUrl = null;
+async function loadPdfJs() {
+  if (!window._pdfjsLib) {
+    const lib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs");
+    lib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+    window._pdfjsLib = lib;
+  }
+  return window._pdfjsLib;
+}
+
+function showCertificatePdfError(viewport, message) {
+  if (!viewport) return;
+  viewport.innerHTML = "";
+  const msg = document.createElement("p");
+  msg.id = "certificate-pdf-error";
+  msg.className = "certificate-pdf-error";
+  msg.textContent = message;
+  viewport.appendChild(msg);
+}
+
+async function renderCertificatePdfPages(viewport) {
+  if (!viewport || !certificatePdfBytes) return;
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: certificatePdfBytes.slice(0) }).promise;
+  viewport.innerHTML = '<div class="certificate-pdf-pages" id="certificate-pdf-pages"></div>';
+  const pagesWrap = document.getElementById("certificate-pdf-pages");
+  if (!pagesWrap) return;
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    const page = await pdf.getPage(pageNum);
+    const vp = page.getViewport({ scale: CERT_PDF_BASE_SCALE * certificateZoom });
+    const canvas = document.createElement("canvas");
+    canvas.className = "certificate-pdf-page";
+    canvas.width = vp.width;
+    canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    pagesWrap.appendChild(canvas);
   }
 }
 
 async function loadCertificatePdfIntoFrame(pdfUrl, column) {
-  const embed = document.getElementById("certificate-pdf");
   const viewport = document.getElementById("certificate-viewport");
-  document.getElementById("certificate-pdf-error")?.remove();
-  if (!embed) return;
+  if (!viewport) return;
+
+  const finishLoading = () => column?.classList.remove("is-loading");
 
   try {
     const res = await fetch(pdfUrl, { mode: "cors" });
@@ -989,43 +1124,35 @@ async function loadCertificatePdfIntoFrame(pdfUrl, column) {
       }
       throw new Error(detail);
     }
-    const blob = await res.blob();
-    if (!blob.size) {
+    const buf = await res.arrayBuffer();
+    if (!buf.byteLength) {
       throw new Error("PDF response was empty");
     }
-    if (blob.type && blob.type.includes("json")) {
-      const text = await blob.text();
-      throw new Error(text.slice(0, 160) || "Server did not return a PDF");
+    const header = new TextDecoder().decode(buf.slice(0, 8));
+    if (header.startsWith("{") || header.startsWith("[")) {
+      throw new Error("Server did not return a PDF");
     }
-    revokeCertificateBlobUrl();
-    certificateBlobUrl = URL.createObjectURL(blob);
-    embed.removeAttribute("hidden");
-    embed.src = certificateBlobUrl;
-    setCertificateZoom(certificateZoom);
+    certificatePdfBytes = buf;
+    await renderCertificatePdfPages(viewport);
   } catch (err) {
-    embed.removeAttribute("src");
-    embed.setAttribute("hidden", "");
-    if (viewport) {
-      const msg = document.createElement("p");
-      msg.id = "certificate-pdf-error";
-      msg.className = "certificate-pdf-error";
-      msg.textContent = `Could not load PDF preview: ${err.message}. Try Open PDF or Download PDF.`;
-      viewport.prepend(msg);
-    }
+    certificatePdfBytes = null;
+    showCertificatePdfError(
+      viewport,
+      `Could not load PDF preview: ${err.message}. Try Open PDF or Download PDF.`
+    );
   } finally {
-    column?.classList.remove("is-loading");
+    finishLoading();
   }
 }
 
 function setCertificateZoom(scale) {
   certificateZoom = Math.min(CERT_ZOOM_MAX, Math.max(CERT_ZOOM_MIN, Math.round(scale * 100) / 100));
-  const embed = document.getElementById("certificate-pdf");
   const label = document.getElementById("certificate-zoom-label");
-  if (embed) {
-    // Do not use transform:scale on PDF containers — it breaks Chrome's PDF renderer.
-    embed.style.zoom = String(certificateZoom);
-  }
   if (label) label.textContent = `${Math.round(certificateZoom * 100)}%`;
+  const viewport = document.getElementById("certificate-viewport");
+  if (viewport && certificatePdfBytes) {
+    renderCertificatePdfPages(viewport);
+  }
 }
 
 function bindCertificateZoomControls() {
@@ -1091,7 +1218,7 @@ function showCertificatePanel(data) {
       <span class="certificate-zoom-hint">Scroll or use +/− to zoom</span>
     </div>
     <div class="certificate-viewport" id="certificate-viewport">
-      <embed class="certificate-pdf-embed" id="certificate-pdf" type="application/pdf" title="Verification certificate" hidden />
+      <p class="certificate-pdf-loading">Loading PDF…</p>
     </div>
     <div class="certificate-column-actions">
       <a class="btn btn-primary certificate-download" href="${escapeHtml(pdfUrl)}" download="tbmc-${activeTab}-certificate.pdf">Download PDF</a>
@@ -1172,15 +1299,37 @@ function renderAgentCostLink(cost) {
 }
 
 function bindAgentCostPopover() {
+  document.getElementById("agent-cost-popover-portal")?.remove();
+
   const trigger = document.getElementById("agent-cost-trigger");
   const popover = document.getElementById("agent-cost-popover");
   if (!trigger || !popover) return;
 
+  popover.id = "agent-cost-popover-portal";
+  popover.classList.add("agent-cost-popover-portal");
+  document.body.appendChild(popover);
+
   let pinned = false;
   let hideTimer = null;
 
+  const positionPopover = () => {
+    const rect = trigger.getBoundingClientRect();
+    const width = popover.offsetWidth || 280;
+    let left = rect.left;
+    let top = rect.bottom + 6;
+    if (left + width > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - width - 12);
+    }
+    if (top + popover.offsetHeight > window.innerHeight - 12) {
+      top = Math.max(12, rect.top - popover.offsetHeight - 6);
+    }
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  };
+
   const show = () => {
     if (hideTimer) clearTimeout(hideTimer);
+    positionPopover();
     popover.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
   };
@@ -1193,11 +1342,11 @@ function bindAgentCostPopover() {
 
   trigger.addEventListener("mouseenter", show);
   trigger.addEventListener("mouseleave", () => {
-    hideTimer = setTimeout(hide, 120);
+    hideTimer = setTimeout(hide, 160);
   });
   popover.addEventListener("mouseenter", show);
   popover.addEventListener("mouseleave", () => {
-    hideTimer = setTimeout(hide, 120);
+    hideTimer = setTimeout(hide, 160);
   });
   trigger.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1210,6 +1359,9 @@ function bindAgentCostPopover() {
     if (trigger.contains(e.target) || popover.contains(e.target)) return;
     pinned = false;
     hide();
+  });
+  window.addEventListener("resize", () => {
+    if (!popover.hidden) positionPopover();
   });
 }
 
@@ -1320,7 +1472,7 @@ function renderScorecard(data) {
   return `
     <div class="scorecard-header">
       <h3 class="scorecard-title">${escapeHtml(statusWord)}</h3>
-      <p class="scorecard-meta">${sc.flags_count} flag${sc.flags_count === 1 ? "" : "s"} · ${sc.blocks_count} block${sc.blocks_count === 1 ? "" : "s"}${costLine}</p>
+      <div class="scorecard-meta">${sc.flags_count} flag${sc.flags_count === 1 ? "" : "s"} · ${sc.blocks_count} block${sc.blocks_count === 1 ? "" : "s"}${costLine}</div>
     </div>
     ${
       sc.kyb_status === "passed"

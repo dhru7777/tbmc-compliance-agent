@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TBMC Network — 3D Preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; font-family: Inter, system-ui, sans-serif; }
+    body {
+      background: radial-gradient(ellipse 120% 90% at 50% 40%, #1e3a42 0%, #0f1c22 55%, #0a1216 100%);
+      color: #e8eef0;
+    }
+    #canvas-host { position: fixed; inset: 0; }
+    .hud {
+      position: fixed;
+      top: 1.25rem;
+      left: 1.25rem;
+      max-width: 22rem;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .hud h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.5rem;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+      margin-bottom: 0.35rem;
+    }
+    .hud p {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      color: rgba(232, 238, 240, 0.72);
+      margin-bottom: 0.75rem;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      font-size: 0.6875rem;
+      color: rgba(232, 238, 240, 0.85);
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch {
+      width: 0.65rem;
+      height: 0.65rem;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .swatch.issuer { background: #c9a227; }
+    .swatch.business { background: #5eb8c9; }
+    .swatch.hub { background: #f0f4f5; }
+    .swatch.bridge { background: #8fa4ad; }
+    .swatch.new { background: #4ade80; box-shadow: 0 0 8px #4ade8088; }
+    .controls {
+      position: fixed;
+      bottom: 1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.6875rem;
+      color: rgba(232, 238, 240, 0.55);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .badge {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid rgba(201, 162, 39, 0.45);
+      border-radius: 4px;
+      font-size: 0.625rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #c9a227;
+    }
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      z-index: 3;
+      padding: 0.5rem 0.65rem;
+      border-radius: 6px;
+      background: rgba(10, 18, 22, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.75rem;
+      line-height: 1.4;
+      opacity: 0;
+      transition: opacity 0.12s;
+      max-width: 14rem;
+    }
+    #tooltip strong { display: block; font-weight: 600; margin-bottom: 0.15rem; }
+    #tooltip span { color: rgba(232, 238, 240, 0.65); font-size: 0.6875rem; }
+  </style>
+</head>
+<body>
+  <div id="canvas-host"></div>
+  <div class="hud">
+    <h1>Clearinghouse network</h1>
+    <p>Preview — 16 nodes sized by monthly USDC volume. Issuers (gold) and businesses (teal) route settlement through TBMC and bridge clearinghouses (slate).</p>
+    <div class="legend">
+      <span><i class="swatch hub"></i> Clearinghouse</span>
+      <span><i class="swatch bridge"></i> Bridge hub</span>
+      <span><i class="swatch issuer"></i> Issuer</span>
+      <span><i class="swatch business"></i> Business</span>
+      <span><i class="swatch new"></i> New member</span>
+    </div>
+    <div class="badge">Design preview — not wired to app yet</div>
+  </div>
+  <div class="controls">Drag to orbit · Scroll to zoom · Hover nodes for volume</div>
+  <div id="tooltip"></div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const NODES = [
+      { id: "tbmc", label: "TBMC", kind: "hub", volumeM: 520, x: 0, y: 0, z: 0 },
+      { id: "bridge-pacific", label: "Pacific Bridge", kind: "bridge", volumeM: 210, x: -1.8, y: 0.4, z: -0.6 },
+      { id: "bridge-north", label: "Northwind", kind: "bridge", volumeM: 165, x: 1.6, y: -0.3, z: 0.5 },
+
+      { id: "issuer-atlas", label: "Atlas Stable Mint", kind: "issuer", volumeM: 182, x: -3.2, y: 1.1, z: 1.4 },
+      { id: "issuer-harbor", label: "Harbor Reserve", kind: "issuer", volumeM: 124, x: -2.4, y: -1.3, z: 2.1 },
+      { id: "issuer-prism", label: "Prism Dollar", kind: "issuer", volumeM: 96, x: 3.0, y: 0.9, z: -1.8 },
+      { id: "issuer-summit", label: "Summit Coin", kind: "issuer", volumeM: 71, x: 2.5, y: -1.5, z: -2.4 },
+      { id: "issuer-meridian", label: "Meridian USDC", kind: "issuer", volumeM: 58, x: -0.8, y: 2.2, z: 2.6 },
+      { id: "issuer-cedar", label: "Cedar Trust", kind: "issuer", volumeM: 41, x: 0.9, y: 2.4, z: -2.8 },
+
+      { id: "biz-clearline", label: "Clearline Treasury", kind: "business", volumeM: 88, x: -3.6, y: -0.6, z: -1.2 },
+      { id: "biz-summit", label: "Summit Pay", kind: "business", volumeM: 64, x: 3.4, y: 1.6, z: 1.0 },
+      { id: "biz-redwood", label: "Redwood Commerce", kind: "business", volumeM: 47, x: -1.2, y: -2.3, z: -1.8 },
+      { id: "biz-borealis", label: "Borealis FX", kind: "business", volumeM: 36, x: 1.8, y: -2.1, z: 1.6 },
+      { id: "biz-nexbridge", label: "Nexbridge Capital", kind: "business", volumeM: 29, x: -2.8, y: 1.8, z: -2.2 },
+
+      { id: "new-riverstone", label: "Riverstone Holdings", kind: "new", volumeM: 175, x: 0.4, y: 0.2, z: 3.2 },
+    ];
+
+    const COLORS = {
+      hub: 0xf0f4f5,
+      bridge: 0x8fa4ad,
+      issuer: 0xc9a227,
+      business: 0x5eb8c9,
+      new: 0x4ade80,
+    };
+
+    const LINKS = [
+      ["tbmc", "bridge-pacific"], ["tbmc", "bridge-north"],
+      ["bridge-pacific", "issuer-atlas"], ["bridge-pacific", "issuer-harbor"], ["bridge-pacific", "biz-clearline"],
+      ["bridge-north", "issuer-prism"], ["bridge-north", "issuer-summit"], ["bridge-north", "biz-summit"],
+      ["tbmc", "issuer-meridian"], ["tbmc", "issuer-cedar"], ["tbmc", "biz-redwood"], ["tbmc", "biz-borealis"],
+      ["tbmc", "biz-nexbridge"], ["tbmc", "issuer-atlas"], ["tbmc", "issuer-prism"],
+      ["bridge-pacific", "bridge-north"],
+      ["new-riverstone", "tbmc"], ["new-riverstone", "bridge-north"],
+      ["issuer-harbor", "biz-nexbridge"], ["issuer-atlas", "biz-clearline"],
+    ];
+
+    function radiusForVolume(volumeM) {
+      return 0.14 + Math.sqrt(volumeM / 520) * 0.38;
+    }
+
+    const host = document.getElementById("canvas-host");
+    const tooltip = document.getElementById("tooltip");
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a1216, 0.055);
+
+    const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.2, 7.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x0a1216, 1);
+    host.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 3.5;
+    controls.maxDistance = 14;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.35;
+
+    scene.add(new THREE.AmbientLight(0x6a8a96, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
+    key.position.set(4, 6, 5);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0xc9a227, 0.25);
+    rim.position.set(-5, -2, -4);
+    scene.add(rim);
+
+    const nodeById = Object.fromEntries(NODES.map((n) => [n.id, n]));
+    const meshes = [];
+    const labelSprites = [];
+
+    const sphereGeo = new THREE.SphereGeometry(1, 32, 32);
+
+    NODES.forEach((node) => {
+      const r = radiusForVolume(node.volumeM);
+      const color = COLORS[node.kind];
+      const mat = new THREE.MeshPhongMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: node.kind === "new" ? 0.35 : node.kind === "hub" ? 0.12 : 0.08,
+        shininess: 60,
+        transparent: true,
+        opacity: node.kind === "bridge" ? 0.88 : 0.95,
+      });
+      const mesh = new THREE.Mesh(sphereGeo, mat);
+      mesh.scale.setScalar(r);
+      mesh.position.set(node.x * 1.15, node.y * 1.15, node.z * 1.15);
+      mesh.userData = { ...node, radius: r };
+      scene.add(mesh);
+      meshes.push(mesh);
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      const fontSize = node.kind === "hub" ? 28 : 22;
+      ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
+      const w = ctx.measureText(node.label).width + 24;
+      canvas.width = w;
+      canvas.height = fontSize + 16;
+      ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(node.label, w / 2, canvas.height / 2);
+      const tex = new THREE.CanvasTexture(canvas);
+      const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(spriteMat);
+      const labelScale = 0.55 + r * 0.35;
+      sprite.scale.set(labelScale * (w / 64), labelScale * 0.35, 1);
+      sprite.position.copy(mesh.position);
+      sprite.position.y -= r + 0.22;
+      scene.add(sprite);
+      labelSprites.push({ sprite, mesh });
+    });
+
+    const linePositions = [];
+    LINKS.forEach(([a, b]) => {
+      const na = nodeById[a];
+      const nb = nodeById[b];
+      if (!na || !nb) return;
+      linePositions.push(
+        na.x * 1.15, na.y * 1.15, na.z * 1.15,
+        nb.x * 1.15, nb.y * 1.15, nb.z * 1.15
+      );
+    });
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(linePositions, 3));
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0x3d5a66,
+      transparent: true,
+      opacity: 0.42,
+    });
+    scene.add(new THREE.LineSegments(lineGeo, lineMat));
+
+    const glowGeo = new THREE.RingGeometry(3.8, 3.82, 64);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: 0x2a4a54,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(glowGeo, glowMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = -1.8;
+    scene.add(ring);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let hovered = null;
+
+    function onPointerMove(e) {
+      pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(meshes);
+      if (hits.length) {
+        const d = hits[0].object.userData;
+        hovered = hits[0].object;
+        tooltip.style.opacity = "1";
+        tooltip.style.left = `${e.clientX + 14}px`;
+        tooltip.style.top = `${e.clientY + 14}px`;
+        const kindLabel = { hub: "Clearinghouse", bridge: "Bridge hub", issuer: "Issuer", business: "Business", new: "New member" }[d.kind];
+        tooltip.innerHTML = `<strong>${d.label}</strong><span>${kindLabel} · ~$${d.volumeM}M/mo USDC</span>`;
+        document.body.style.cursor = "pointer";
+      } else {
+        hovered = null;
+        tooltip.style.opacity = "0";
+        document.body.style.cursor = "default";
+      }
+    }
+
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerdown", () => { controls.autoRotate = false; });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = performance.now() * 0.001;
+      meshes.forEach((m, i) => {
+        const bob = Math.sin(t * 0.9 + i * 0.7) * 0.03;
+        m.position.y = m.userData._baseY ?? m.position.y;
+        if (m.userData._baseY == null) m.userData._baseY = m.position.y;
+        m.position.y = m.userData._baseY + bob;
+        if (m === hovered) m.scale.setScalar(m.userData.radius * 1.08);
+        else m.scale.setScalar(m.userData.radius);
+      });
+      labelSprites.forEach(({ sprite, mesh }) => {
+        sprite.position.x = mesh.position.x;
+        sprite.position.y = mesh.position.y - mesh.userData.radius - 0.22;
+        sprite.position.z = mesh.position.z;
+      });
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
