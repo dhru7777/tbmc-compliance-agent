@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 # Riverstone bundle: agent-skill/mock documents (repo root, not backend/demo/)
-COPY agent-skill/mock\ documents /agent-skill/mock\ documents
+COPY ["agent-skill/mock documents", "/agent-skill/mock documents"]
 
 ENV MOCK_DOCS_DIR="/agent-skill/mock documents"
 
